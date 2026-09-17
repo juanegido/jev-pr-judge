@@ -22,6 +22,7 @@ import { APIConnectionError, APIError } from "@typesafe-ai/sdk";
 import { fetchPullRequest, GitHubUpstreamError } from "../src/lib/github/fetch-pr";
 import { judgePullRequest } from "../src/lib/judge/judge";
 import { buildJudgeState } from "../src/lib/judge/state";
+import { computeCodeFacts, type CodeFacts } from "../src/lib/judge/code-facts";
 import { decide, NOUL_LABELS, DIMENSION_IDS, type JudgeAnswers, type NoulId } from "../src/lib/judge/policy";
 import type { JudgeState, PullRequest } from "../src/lib/judge/types";
 import { computeProxies, type ProxyResults } from "../src/lib/eval/proxies";
@@ -142,13 +143,49 @@ export interface EvalRow {
   model_verdict_confidence?: number;
   model_verdict_probabilities?: Record<string, number>;
   scores?: Record<string, { score: number; confidence: number }>;
+  /** `reviewer_effort`, kept separate from `scores` since it is excluded from the composite. */
+  review_effort?: { score: number; confidence: number };
   nouls?: Record<string, number>;
   proxies: ProxyResults;
+  /** Deterministic code facts (see `src/lib/judge/code-facts.ts`), as counts; computed from the
+   * full pull request independent of whether the model was ever called (works in `--dry-run`). */
+  code_facts: CodeFactsCounts;
   usage?: { input_tokens: number; output_tokens: number };
   model?: string;
   latency_ms?: number;
   answers?: null;
   error?: string;
+}
+
+export interface CodeFactsCounts {
+  test_files_removed: number;
+  test_cases_removed: number;
+  test_cases_disabled: number;
+  migration_files_touched: number;
+  auth_paths_touched: number;
+  files_removed: number;
+}
+
+function zeroCodeFactsCounts(): CodeFactsCounts {
+  return {
+    test_files_removed: 0,
+    test_cases_removed: 0,
+    test_cases_disabled: 0,
+    migration_files_touched: 0,
+    auth_paths_touched: 0,
+    files_removed: 0,
+  };
+}
+
+function codeFactsCounts(codeFacts: CodeFacts): CodeFactsCounts {
+  return {
+    test_files_removed: codeFacts.test_files_removed.length,
+    test_cases_removed: codeFacts.test_cases_removed,
+    test_cases_disabled: codeFacts.test_cases_disabled,
+    migration_files_touched: codeFacts.migration_files_touched.length,
+    auth_paths_touched: codeFacts.auth_paths_touched.length,
+    files_removed: codeFacts.files_removed,
+  };
 }
 
 interface CacheEntry {
@@ -209,6 +246,10 @@ function buildNouls(answers: JudgeAnswers): Record<string, number> {
     nouls[id] = answers[id].noul;
   }
   return nouls;
+}
+
+function buildReviewEffort(answers: JudgeAnswers): { score: number; confidence: number } {
+  return { score: answers.reviewer_effort.score, confidence: answers.reviewer_effort.confidence };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -280,8 +321,9 @@ async function processCandidate(item: GitHubPullListItem, ctx: ProcessContext): 
   const cached = dryRun ? undefined : loadCache(owner, repo, item.number);
   if (cached) {
     if (!isEligible(cached.pr)) return null;
-    const balanced = decide(cached.answers, "balanced");
-    const hotfix = decide(cached.answers, "hotfix");
+    const cachedCodeFacts = computeCodeFacts(cached.pr);
+    const balanced = decide(cached.answers, "balanced", cachedCodeFacts);
+    const hotfix = decide(cached.answers, "hotfix", cachedCodeFacts);
     return {
       number: item.number,
       url,
@@ -302,8 +344,10 @@ async function processCandidate(item: GitHubPullListItem, ctx: ProcessContext): 
       model_verdict_confidence: balanced.modelVerdict.confidence,
       model_verdict_probabilities: balanced.modelVerdict.probabilities,
       scores: buildScores(cached.answers),
+      review_effort: buildReviewEffort(cached.answers),
       nouls: buildNouls(cached.answers),
       proxies: computeProxies(cached.pr),
+      code_facts: codeFactsCounts(cachedCodeFacts),
       usage: cached.usage,
       model: cached.model,
       latency_ms: cached.latency_ms,
@@ -337,7 +381,10 @@ async function processCandidate(item: GitHubPullListItem, ctx: ProcessContext): 
         possible_secret_proxy: false,
         unmentioned_debt_proxy: false,
         touches_shared_infra_proxy: false,
+        touches_auth_proxy: false,
+        migration_proxy: false,
       },
+      code_facts: zeroCodeFactsCounts(),
       error: error instanceof Error ? error.message : String(error),
     };
   }
@@ -362,6 +409,7 @@ async function processCandidate(item: GitHubPullListItem, ctx: ProcessContext): 
     changed_files: pr.changedFiles,
     state_summary: stateSummary,
     proxies,
+    code_facts: codeFactsCounts(state.code_facts),
   };
 
   if (dryRun) {
@@ -373,8 +421,8 @@ async function processCandidate(item: GitHubPullListItem, ctx: ProcessContext): 
     const judged = await withRetry(() => judgePullRequest(url, { githubToken }));
     const latency_ms = Date.now() - started;
     const answers = judged.result.answers as unknown as JudgeAnswers;
-    const balanced = decide(answers, "balanced");
-    const hotfix = decide(answers, "hotfix");
+    const balanced = decide(answers, "balanced", judged.state.code_facts);
+    const hotfix = decide(answers, "hotfix", judged.state.code_facts);
     const judgedStateSummary = summarizeState(judged.state);
 
     saveCache(owner, repo, item.number, {
@@ -393,6 +441,7 @@ async function processCandidate(item: GitHubPullListItem, ctx: ProcessContext): 
       deletions: judged.pr.deletions,
       changed_files: judged.pr.changedFiles,
       state_summary: judgedStateSummary,
+      code_facts: codeFactsCounts(judged.state.code_facts),
       decision_balanced: balanced.decision,
       decision_hotfix: hotfix.decision,
       composite_balanced: balanced.composite,
@@ -400,6 +449,7 @@ async function processCandidate(item: GitHubPullListItem, ctx: ProcessContext): 
       model_verdict_confidence: balanced.modelVerdict.confidence,
       model_verdict_probabilities: balanced.modelVerdict.probabilities,
       scores: buildScores(answers),
+      review_effort: buildReviewEffort(answers),
       nouls: buildNouls(answers),
       usage: judged.result.usage,
       model: judged.result.model,

@@ -116,3 +116,16 @@ test("small files are prioritized to keep their full patch over larger ones, reg
   assert.equal(big?.patch, undefined);
   assert.equal(big?.patch_omitted_reason, "budget");
 });
+
+test("buildJudgeState includes code_facts computed from the full pull request", () => {
+  const pr = makePr([
+    makeFile({ path: "src/foo.test.ts", status: "removed" }),
+    makeFile({ path: "db/migrations/001_init.sql" }),
+  ]);
+
+  const state = buildJudgeState(pr);
+
+  assert.deepEqual(state.code_facts.test_files_removed, ["src/foo.test.ts"]);
+  assert.deepEqual(state.code_facts.migration_files_touched, ["db/migrations/001_init.sql"]);
+  assert.equal(state.code_facts.files_removed, 1);
+});

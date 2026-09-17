@@ -25116,6 +25116,54 @@ var parseBody = async (res) => {
   }
 };
 
+// src/lib/shared/test-file-pattern.ts
+var TEST_FILE_PATTERN = /(\.|_)(test|spec)\.[jt]sx?$|__tests__\/|(^|\/)tests?\//;
+
+// src/lib/judge/code-facts.ts
+var REMOVED_TEST_CASE_PATTERN = /^\s*-\s*(test|it|describe)\s*\(/;
+var DISABLED_TEST_CASE_PATTERN = /\.(skip|only)\(|\bxit\(|\bxdescribe\(|\bxtest\(/;
+var MIGRATION_PATH_PATTERN = /\/migrations?\/|\/migrate\/|\.sql$|schema\.prisma$|\/alembic\//;
+var AUTH_PATH_PATTERN = /auth|session|permission|acl|oauth|jwt|passport|guard|middleware/i;
+function removedLines(patch) {
+  return patch.split("\n").filter((line) => line.startsWith("-") && !line.startsWith("---"));
+}
+function addedLines(patch) {
+  return patch.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++"));
+}
+function computeCodeFacts(pr) {
+  const test_files_removed = [];
+  const migration_files_touched = [];
+  const auth_paths_touched = [];
+  let test_cases_removed = 0;
+  let test_cases_disabled = 0;
+  let files_removed = 0;
+  for (const file of pr.files) {
+    const isTestFile = TEST_FILE_PATTERN.test(file.path);
+    if (file.status === "removed") {
+      files_removed++;
+      if (isTestFile) test_files_removed.push(file.path);
+    }
+    if (MIGRATION_PATH_PATTERN.test(file.path)) migration_files_touched.push(file.path);
+    if (AUTH_PATH_PATTERN.test(file.path)) auth_paths_touched.push(file.path);
+    if (isTestFile && file.patch) {
+      for (const line of removedLines(file.patch)) {
+        if (REMOVED_TEST_CASE_PATTERN.test(line)) test_cases_removed++;
+      }
+      for (const line of addedLines(file.patch)) {
+        if (DISABLED_TEST_CASE_PATTERN.test(line)) test_cases_disabled++;
+      }
+    }
+  }
+  return {
+    test_files_removed,
+    test_cases_removed,
+    test_cases_disabled,
+    migration_files_touched,
+    auth_paths_touched,
+    files_removed
+  };
+}
+
 // src/lib/judge/state.ts
 var PER_FILE_PATCH_CAP = 6e3;
 var TOTAL_PATCH_BUDGET = 6e4;
@@ -25225,7 +25273,10 @@ function buildJudgeState(pr) {
       }
     },
     files,
-    notes
+    notes,
+    // Computed from the full, untruncated `pr` (before the per-file/budget truncation above), so
+    // the model sees observed facts about the real diff even when its patches are cut down.
+    code_facts: computeCodeFacts(pr)
   };
 }
 
@@ -25268,6 +25319,15 @@ function buildQuestions() {
         "The body explains the motivation, the approach, any trade-offs considered, and how to verify the change."
       ]
     ),
+    reviewer_effort: score(
+      "Look at the diff in `files` together with the title and body. How hard would it be for a human reviewer to VERIFY this change is correct \u2014 not how far the change reaches into the system (that is `blast_radius`), just how much work checking it takes.",
+      [
+        "Skim: mechanical or obvious change (rename, typo, config value, generated code); a reviewer can approve in under five minutes without running anything.",
+        "Focused read: one area of logic, 15\u201330 minutes; the change can be understood from the diff alone.",
+        "Deep review: several interacting areas or subtle logic (concurrency, caching, edge cases); needs domain context beyond the diff and likely a look at surrounding code.",
+        "Hands-on: a reviewer must pull the branch and run it, or a specialist (security, database, infrastructure) must review; the diff alone cannot establish correctness."
+      ]
+    ),
     claims_tests_without_evidence: noul(
       "Does the pull request body claim that tests were added, updated, or that they pass, while no file in `files` looks like a test file (by path or name)?",
       {
@@ -25308,6 +25368,34 @@ function buildQuestions() {
       {
         true: "The diff changes a public contract in a way that breaks callers, and the body says nothing about it.",
         false: "The diff makes no such breaking change, or the body explicitly flags it as a breaking change."
+      }
+    ),
+    sql_injection_risk: noul(
+      "Does the diff in `files` add or modify a database query (SQL, or a raw-query API of an ORM) that is built by string concatenation, template interpolation, or format strings with values that could originate from user input, instead of parameterized queries or bound parameters?",
+      {
+        true: "A query in the diff is assembled by concatenating or interpolating a value that could come from a user, rather than binding it as a parameter.",
+        false: "Queries in the diff are parameterized, the interpolated values are clearly constants or identifiers controlled by code, or the diff has no query code at all."
+      }
+    ),
+    touches_auth: noul(
+      "Does the diff in `files` change authentication, authorization, session handling, permission or role checks, token or cookie handling, CSRF/CORS configuration, or security middleware? Judge by what the code does, not only by file names \u2014 `code_facts.auth_paths_touched` is a hint (paths that merely mention auth-related words), not the answer.",
+      {
+        true: "The diff changes how authentication, authorization, sessions, or security middleware behave.",
+        false: "The diff makes no such change."
+      }
+    ),
+    destructive_migration: noul(
+      "Does the diff in `files` add a schema or data migration (see `code_facts.migration_files_touched` for a path-based hint) that drops or renames a table or column, truncates or rewrites data, changes a column type lossily, or is otherwise not safely reversible, AND the body does not describe a backfill, rollback, or deployment-order plan for it?",
+      {
+        true: "The diff adds a migration that is not safely reversible, and the body says nothing about a backfill, rollback, or deployment-order plan.",
+        false: "There is no migration in the diff, the migration is purely additive, or the body states a plan."
+      }
+    ),
+    test_deletion_unjustified: noul(
+      "If the diff removes, skips, or disables existing tests (see `code_facts.test_files_removed`, `code_facts.test_cases_removed`, and `code_facts.test_cases_disabled`), does the body fail to give a reason for doing so?",
+      {
+        true: "Tests were removed, skipped, or disabled in the diff, and the body gives no reason (obsolete behavior, moved elsewhere, flaky with a linked issue, etc.) for it.",
+        false: "No tests were removed, skipped, or disabled, or the body explains why they were."
       }
     ),
     verdict: choice(
@@ -25372,7 +25460,11 @@ var NOUL_IDS = [
   "unmentioned_debt",
   "leftover_debug",
   "possible_secret",
-  "breaking_change_unflagged"
+  "breaking_change_unflagged",
+  "sql_injection_risk",
+  "touches_auth",
+  "destructive_migration",
+  "test_deletion_unjustified"
 ];
 var NOUL_LABELS = {
   claims_tests_without_evidence: "Claims tests without evidence",
@@ -25380,7 +25472,11 @@ var NOUL_LABELS = {
   unmentioned_debt: "Unmentioned debt",
   leftover_debug: "Leftover debug statements",
   possible_secret: "Possible secret",
-  breaking_change_unflagged: "Unflagged breaking change"
+  breaking_change_unflagged: "Unflagged breaking change",
+  sql_injection_risk: "SQL injection risk",
+  touches_auth: "Touches auth",
+  destructive_migration: "Destructive migration",
+  test_deletion_unjustified: "Unjustified test deletion"
 };
 var NOUL_THRESHOLDS = {
   claims_tests_without_evidence: { warn: 0.5, block: 0.8 },
@@ -25388,15 +25484,27 @@ var NOUL_THRESHOLDS = {
   unmentioned_debt: { warn: 0.5, block: 0.85 },
   leftover_debug: { warn: 0.5, block: 0.85 },
   possible_secret: { warn: 0.3, block: 0.7 },
-  breaking_change_unflagged: { warn: 0.4, block: 0.75 }
+  breaking_change_unflagged: { warn: 0.4, block: 0.75 },
+  sql_injection_risk: { warn: 0.4, block: 0.7 },
+  touches_auth: { warn: 0.4, block: 0.7 },
+  destructive_migration: { warn: 0.4, block: 0.7 },
+  test_deletion_unjustified: { warn: 0.4, block: 0.7 }
 };
 var HARD_RULES = [
   { id: "possible_secret", threshold: 0.7 },
-  { id: "claims_tests_without_evidence", threshold: 0.8 }
+  { id: "claims_tests_without_evidence", threshold: 0.8 },
+  { id: "sql_injection_risk", threshold: 0.7 }
 ];
 var BREAKING_CHANGE_FLOOR_THRESHOLD = 0.75;
+var HUMAN_REVIEW_FLOOR_RULES = [
+  { id: "touches_auth", threshold: 0.7 },
+  { id: "destructive_migration", threshold: 0.7 },
+  { id: "test_deletion_unjustified", threshold: 0.7 }
+];
+var TEST_DELETION_CODE_FACT_THRESHOLD = 0.5;
 var APPROVE_THRESHOLD = 0.75;
 var HUMAN_REVIEW_THRESHOLD = 0.5;
+var REVIEW_EFFORT_LABELS = ["skim", "focused", "deep", "hands-on"];
 function buildDimension(answer) {
   let dominantLevel = "0";
   let bestProbability = -Infinity;
@@ -25416,6 +25524,16 @@ function buildDimension(answer) {
     dominantLegend: answer.legend[dominantLevel] ?? ""
   };
 }
+function buildReviewEffort(answer) {
+  const dimension = buildDimension(answer);
+  const label = REVIEW_EFFORT_LABELS[Number(dimension.dominantLevel)] ?? REVIEW_EFFORT_LABELS[0];
+  return {
+    raw: dimension.raw,
+    levels: dimension.levels,
+    dominantLegend: dimension.dominantLegend,
+    label
+  };
+}
 function levelFor(id, probability) {
   const thresholds = NOUL_THRESHOLDS[id];
   if (probability >= thresholds.block) return "block";
@@ -25427,7 +25545,7 @@ function decisionFromComposite(composite) {
   if (composite >= HUMAN_REVIEW_THRESHOLD) return "human_review";
   return "send_back";
 }
-function decide(answers, profile) {
+function decide(answers, profile, codeFacts) {
   const weights = PROFILE_WEIGHTS[profile];
   const dimensions = {
     scope_adherence: buildDimension(answers.scope_adherence),
@@ -25435,6 +25553,7 @@ function decide(answers, profile) {
     blast_radius: buildDimension(answers.blast_radius),
     description_quality: buildDimension(answers.description_quality)
   };
+  const reviewEffort = buildReviewEffort(answers.reviewer_effort);
   const safety = 1 - dimensions.blast_radius.normalized;
   const composite = dimensions.scope_adherence.normalized * weights.scope + dimensions.test_evidence.normalized * weights.tests + safety * weights.safety + dimensions.description_quality.normalized * weights.description;
   const flags = NOUL_IDS.map((id) => {
@@ -25444,17 +25563,27 @@ function decide(answers, profile) {
   const hardRuleHits = HARD_RULES.filter((rule) => answers[rule.id].noul >= rule.threshold).map(
     (rule) => rule.id
   );
+  const floorRuleHits = HUMAN_REVIEW_FLOOR_RULES.filter(
+    (rule) => answers[rule.id].noul >= rule.threshold
+  ).map((rule) => rule.id);
+  const testDeletionCodeFactHit = codeFacts !== void 0 && (codeFacts.test_files_removed.length > 0 || codeFacts.test_cases_disabled > 0) && answers.test_deletion_unjustified.noul >= TEST_DELETION_CODE_FACT_THRESHOLD;
   let decision = decisionFromComposite(composite);
   const breakingChangeHit = answers.breaking_change_unflagged.noul >= BREAKING_CHANGE_FLOOR_THRESHOLD;
   if (breakingChangeHit && decision === "approve") decision = "human_review";
+  if ((floorRuleHits.length > 0 || testDeletionCodeFactHit) && decision === "approve") decision = "human_review";
   if (hardRuleHits.length > 0) decision = "send_back";
+  const allHardRuleHits = [...hardRuleHits, ...floorRuleHits];
+  if (testDeletionCodeFactHit && !allHardRuleHits.includes("test_deletion_unjustified")) {
+    allHardRuleHits.push("test_deletion_unjustified");
+  }
   return {
     profile,
     weights,
     composite,
     dimensions,
+    reviewEffort,
     flags,
-    hardRuleHits,
+    hardRuleHits: allHardRuleHits,
     decision,
     modelVerdict: {
       choice: answers.verdict.choice,
@@ -25479,6 +25608,12 @@ var DECISION_TITLE = {
   human_review: "Human review",
   send_back: "Send back"
 };
+var REVIEW_EFFORT_TITLES = {
+  skim: "Skim",
+  focused: "Focused read",
+  deep: "Deep review",
+  "hands-on": "Hands-on"
+};
 function percent(value) {
   return `${Math.round(value * 100)}%`;
 }
@@ -25497,11 +25632,28 @@ function flagsTable(policy) {
   });
   return ["| Flag | Probability | Level | |", "| --- | --- | --- | --- |", ...rows].join("\n");
 }
+function codeFactsLine(codeFacts) {
+  const parts = [];
+  if (codeFacts.test_files_removed.length > 0) {
+    parts.push(`${codeFacts.test_files_removed.length} test file(s) removed`);
+  }
+  if (codeFacts.test_cases_removed > 0) parts.push(`${codeFacts.test_cases_removed} test case(s) removed`);
+  if (codeFacts.test_cases_disabled > 0) parts.push(`${codeFacts.test_cases_disabled} test case(s) disabled`);
+  if (codeFacts.migration_files_touched.length > 0) {
+    parts.push(`${codeFacts.migration_files_touched.length} migration file(s) touched`);
+  }
+  if (codeFacts.auth_paths_touched.length > 0) {
+    parts.push(`${codeFacts.auth_paths_touched.length} auth-related path(s) touched`);
+  }
+  return parts.length > 0 ? `Code facts: ${parts.join(", ")}.` : void 0;
+}
 function renderComment(input) {
-  const { policy, model, usage, repoUrl } = input;
+  const { policy, model, usage, repoUrl, codeFacts } = input;
   const emoji = DECISION_EMOJI[policy.decision];
   const decisionTitle = DECISION_TITLE[policy.decision];
   const profileLabel = PROFILE_LABELS[policy.profile];
+  const effortLine = `Estimated review effort: ${REVIEW_EFFORT_TITLES[policy.reviewEffort.label]} \u2014 ${policy.reviewEffort.dominantLegend}`;
+  const factsLine = codeFactsLine(codeFacts);
   const lines = [
     STICKY_COMMENT_MARKER,
     "## PR Judge",
@@ -25510,6 +25662,9 @@ function renderComment(input) {
     "",
     `Composite (${profileLabel}): ${percent(policy.composite)}`,
     "",
+    effortLine,
+    "",
+    ...factsLine ? [factsLine, ""] : [],
     dimensionsTable(policy),
     "",
     flagsTable(policy),
@@ -25603,8 +25758,8 @@ async function run() {
   const prNumber = resolvePrNumber(getInput("pr-number"));
   const { owner, repo } = context2.repo;
   const prUrl = `https://github.com/${owner}/${repo}/pull/${prNumber}`;
-  const { result } = await judgePullRequest(prUrl, { githubToken, apiKey });
-  const policy = decide(result.answers, profile);
+  const { state, result } = await judgePullRequest(prUrl, { githubToken, apiKey });
+  const policy = decide(result.answers, profile, state.code_facts);
   setOutput("decision", policy.decision);
   setOutput("composite", policy.composite.toFixed(2));
   setOutput("model-verdict", policy.modelVerdict.choice);
@@ -25614,7 +25769,8 @@ async function run() {
     policy,
     model: result.model,
     usage: result.usage,
-    repoUrl: "https://github.com/juanegido/pr-judge"
+    repoUrl: "https://github.com/juanegido/jev-pr-judge",
+    codeFacts: state.code_facts
   });
   await summary.addRaw(body).write();
   let commentUrl = "";

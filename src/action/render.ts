@@ -5,12 +5,14 @@
  * fixtures (see `render.test.ts`). `main.ts` is the only place that touches the GitHub API or
  * Action inputs/outputs.
  */
+import type { CodeFacts } from "@/lib/judge/code-facts";
 import {
   DIMENSION_IDS,
   DIMENSION_LABELS,
   NOUL_LABELS,
   PROFILE_LABELS,
   type PolicyResult,
+  type ReviewEffortLabel,
 } from "@/lib/judge/policy";
 import type { Decision } from "@/lib/judge/types";
 
@@ -29,12 +31,20 @@ const DECISION_TITLE: Record<Decision, string> = {
   send_back: "Send back",
 };
 
+const REVIEW_EFFORT_TITLES: Record<ReviewEffortLabel, string> = {
+  skim: "Skim",
+  focused: "Focused read",
+  deep: "Deep review",
+  "hands-on": "Hands-on",
+};
+
 export interface RenderCommentInput {
   policy: PolicyResult;
   model: string;
   usage?: { input_tokens: number; output_tokens: number };
   /** URL of this action's repository, linked from the footer. */
   repoUrl: string;
+  codeFacts: CodeFacts;
 }
 
 function percent(value: number): string {
@@ -60,12 +70,31 @@ function flagsTable(policy: PolicyResult): string {
   return ["| Flag | Probability | Level | |", "| --- | --- | --- | --- |", ...rows].join("\n");
 }
 
+/** One line summarizing non-zero deterministic code facts; omitted entirely when everything is zero. */
+function codeFactsLine(codeFacts: CodeFacts): string | undefined {
+  const parts: string[] = [];
+  if (codeFacts.test_files_removed.length > 0) {
+    parts.push(`${codeFacts.test_files_removed.length} test file(s) removed`);
+  }
+  if (codeFacts.test_cases_removed > 0) parts.push(`${codeFacts.test_cases_removed} test case(s) removed`);
+  if (codeFacts.test_cases_disabled > 0) parts.push(`${codeFacts.test_cases_disabled} test case(s) disabled`);
+  if (codeFacts.migration_files_touched.length > 0) {
+    parts.push(`${codeFacts.migration_files_touched.length} migration file(s) touched`);
+  }
+  if (codeFacts.auth_paths_touched.length > 0) {
+    parts.push(`${codeFacts.auth_paths_touched.length} auth-related path(s) touched`);
+  }
+  return parts.length > 0 ? `Code facts: ${parts.join(", ")}.` : undefined;
+}
+
 /** Render the Markdown body posted as the sticky PR comment and written to the job summary. */
 export function renderComment(input: RenderCommentInput): string {
-  const { policy, model, usage, repoUrl } = input;
+  const { policy, model, usage, repoUrl, codeFacts } = input;
   const emoji = DECISION_EMOJI[policy.decision];
   const decisionTitle = DECISION_TITLE[policy.decision];
   const profileLabel = PROFILE_LABELS[policy.profile];
+  const effortLine = `Estimated review effort: ${REVIEW_EFFORT_TITLES[policy.reviewEffort.label]} — ${policy.reviewEffort.dominantLegend}`;
+  const factsLine = codeFactsLine(codeFacts);
 
   const lines: string[] = [
     STICKY_COMMENT_MARKER,
@@ -75,6 +104,9 @@ export function renderComment(input: RenderCommentInput): string {
     "",
     `Composite (${profileLabel}): ${percent(policy.composite)}`,
     "",
+    effortLine,
+    "",
+    ...(factsLine ? [factsLine, ""] : []),
     dimensionsTable(policy),
     "",
     flagsTable(policy),

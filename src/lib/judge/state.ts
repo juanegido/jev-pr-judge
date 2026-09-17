@@ -1,3 +1,4 @@
+import { computeCodeFacts } from "./code-facts";
 import type { JudgeState, JudgeStateFile, PullRequest, PullRequestFile } from "./types";
 
 const PER_FILE_PATCH_CAP = 6_000;
@@ -147,5 +148,8 @@ export function buildJudgeState(pr: PullRequest): JudgeState {
     },
     files,
     notes,
+    // Computed from the full, untruncated `pr` (before the per-file/budget truncation above), so
+    // the model sees observed facts about the real diff even when its patches are cut down.
+    code_facts: computeCodeFacts(pr),
   };
 }

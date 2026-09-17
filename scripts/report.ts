@@ -150,6 +150,23 @@ function sectionSample(rows: EvalRow[]): string {
     `| Files omitted (lockfile or budget) | ${omitted} |`,
   );
 
+  const withTestFilesRemoved = rows.filter((r) => r.code_facts.test_files_removed > 0).length;
+  const withTestCasesDisabled = rows.filter((r) => r.code_facts.test_cases_disabled > 0).length;
+  const withMigrations = rows.filter((r) => r.code_facts.migration_files_touched > 0).length;
+  const withAuthPaths = rows.filter((r) => r.code_facts.auth_paths_touched > 0).length;
+
+  lines.push(
+    "",
+    "**Code facts** (deterministic, computed from the full diff — see `src/lib/judge/code-facts.ts`)",
+    "",
+    "| Fact | PRs | % |",
+    "| --- | --- | --- |",
+    `| Test files removed | ${withTestFilesRemoved} | ${pct(withTestFilesRemoved, rows.length)} |`,
+    `| Test cases disabled | ${withTestCasesDisabled} | ${pct(withTestCasesDisabled, rows.length)} |`,
+    `| Migration files touched | ${withMigrations} | ${pct(withMigrations, rows.length)} |`,
+    `| Auth paths touched | ${withAuthPaths} | ${pct(withAuthPaths, rows.length)} |`,
+  );
+
   return lines.join("\n");
 }
 
@@ -223,6 +240,20 @@ function sectionScoresByOutcome(rows: EvalRow[], title: string, level = 3): stri
       );
     }
   }
+
+  // reviewer_effort is a Score like the four composite dimensions, but excluded from the
+  // composite itself; it fits the same table as one more row rather than a whole new section.
+  for (const outcome of ["merged", "unmerged"] as const) {
+    const group = modelRows.filter((r) => r.outcome === outcome);
+    const values = group.map((r) => r.review_effort?.score).filter((v): v is number => v !== undefined);
+    const confidences = group
+      .map((r) => r.review_effort?.confidence)
+      .filter((v): v is number => v !== undefined);
+    lines.push(
+      `| Reviewer effort | ${outcome} | ${values.length} | ${fmt(mean(values))} | ${fmt(stddev(values))} | ${fmt(mean(confidences))} |`,
+    );
+  }
+
   return lines.join("\n");
 }
 
@@ -307,7 +338,23 @@ const NOUL_PROXY_MAPPINGS: ProxyMapping[] = [
   { noulId: "leftover_debug", proxyKey: "leftover_debug_proxy" },
   { noulId: "possible_secret", proxyKey: "possible_secret_proxy" },
   { noulId: "unmentioned_debt", proxyKey: "unmentioned_debt_proxy" },
+  // These two proxies are path-only (see `src/lib/eval/proxies.ts`): `touches_auth_proxy` only
+  // detects an auth-sounding path, and `migration_proxy` only detects that a migration file
+  // exists — neither can see whether the change is actually risky, so precision against the
+  // semantic Nouls below is expected to be lower than for the proxies above.
+  { noulId: "touches_auth", proxyKey: "touches_auth_proxy" },
+  { noulId: "destructive_migration", proxyKey: "migration_proxy" },
 ];
+
+/** Extra per-noul caveats rendered right under that noul's heading in section 5. */
+const NOUL_PROXY_NOTES: Partial<Record<NoulId, string>> = {
+  destructive_migration:
+    "`migration_proxy` only detects that a migration file exists in the diff (see " +
+    "`src/lib/eval/proxies.ts`) — it says nothing about whether that migration is actually " +
+    "destructive or lacks a stated plan. Expect lower precision here than for the other proxies: " +
+    "most migrations are not destructive, so the proxy will fire on many PRs the Noul correctly " +
+    "scores low.",
+};
 
 function precisionRecallF1(
   values: Array<{ noul: number; proxyPositive: boolean }>,
@@ -355,6 +402,8 @@ function sectionNoulsVsProxies(rows: EvalRow[]): string {
       .filter((v): v is { noul: number; proxyPositive: boolean } => v.noul !== undefined && v.proxyPositive !== undefined);
 
     lines.push(`### ${NOUL_LABELS[noulId]}`, "");
+    const note = NOUL_PROXY_NOTES[noulId];
+    if (note) lines.push(note, "");
 
     if (values.length === 0) {
       lines.push("_No data._", "");

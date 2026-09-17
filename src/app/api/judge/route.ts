@@ -65,6 +65,7 @@ export async function POST(request: Request) {
         truncated,
         notes: state.notes,
       },
+      code_facts: state.code_facts,
       answers: result.answers,
       usage: result.usage,
       model: result.model,

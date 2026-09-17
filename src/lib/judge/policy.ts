@@ -1,3 +1,4 @@
+import type { CodeFacts } from "./code-facts";
 import type { Decision, Flag, FlagLevel, Profile } from "./types";
 
 /** Structural shape of one `score` answer, loose enough to unit-test with plain fixtures.
@@ -30,12 +31,17 @@ export interface JudgeAnswers {
   test_evidence: ScoreAnswer;
   blast_radius: ScoreAnswer;
   description_quality: ScoreAnswer;
+  reviewer_effort: ScoreAnswer;
   claims_tests_without_evidence: NoulAnswer;
   out_of_scope_changes: NoulAnswer;
   unmentioned_debt: NoulAnswer;
   leftover_debug: NoulAnswer;
   possible_secret: NoulAnswer;
   breaking_change_unflagged: NoulAnswer;
+  sql_injection_risk: NoulAnswer;
+  touches_auth: NoulAnswer;
+  destructive_migration: NoulAnswer;
+  test_deletion_unjustified: NoulAnswer;
   verdict: ChoiceAnswer;
 }
 
@@ -97,7 +103,11 @@ export type NoulId =
   | "unmentioned_debt"
   | "leftover_debug"
   | "possible_secret"
-  | "breaking_change_unflagged";
+  | "breaking_change_unflagged"
+  | "sql_injection_risk"
+  | "touches_auth"
+  | "destructive_migration"
+  | "test_deletion_unjustified";
 
 const NOUL_IDS: readonly NoulId[] = [
   "claims_tests_without_evidence",
@@ -106,6 +116,10 @@ const NOUL_IDS: readonly NoulId[] = [
   "leftover_debug",
   "possible_secret",
   "breaking_change_unflagged",
+  "sql_injection_risk",
+  "touches_auth",
+  "destructive_migration",
+  "test_deletion_unjustified",
 ];
 
 export const NOUL_LABELS: Record<NoulId, string> = {
@@ -115,6 +129,10 @@ export const NOUL_LABELS: Record<NoulId, string> = {
   leftover_debug: "Leftover debug statements",
   possible_secret: "Possible secret",
   breaking_change_unflagged: "Unflagged breaking change",
+  sql_injection_risk: "SQL injection risk",
+  touches_auth: "Touches auth",
+  destructive_migration: "Destructive migration",
+  test_deletion_unjustified: "Unjustified test deletion",
 };
 
 const NOUL_THRESHOLDS: Record<NoulId, { warn: number; block: number }> = {
@@ -124,25 +142,61 @@ const NOUL_THRESHOLDS: Record<NoulId, { warn: number; block: number }> = {
   leftover_debug: { warn: 0.5, block: 0.85 },
   possible_secret: { warn: 0.3, block: 0.7 },
   breaking_change_unflagged: { warn: 0.4, block: 0.75 },
+  sql_injection_risk: { warn: 0.4, block: 0.7 },
+  touches_auth: { warn: 0.4, block: 0.7 },
+  destructive_migration: { warn: 0.4, block: 0.7 },
+  test_deletion_unjustified: { warn: 0.4, block: 0.7 },
 };
 
-/** Hard rules are evaluated on their own and never averaged into the composite. */
+/** Hard rules are evaluated on their own and never averaged into the composite; a hit always
+ * forces `send_back` regardless of profile or composite. */
 const HARD_RULES: ReadonlyArray<{ id: NoulId; threshold: number }> = [
   { id: "possible_secret", threshold: 0.7 },
   { id: "claims_tests_without_evidence", threshold: 0.8 },
+  { id: "sql_injection_risk", threshold: 0.7 },
 ];
 
 /** An unflagged breaking change can't be waved through as "approve", even with a high composite. */
 const BREAKING_CHANGE_FLOOR_THRESHOLD = 0.75;
 
+/** Floor rules bump `approve` up to at least `human_review`; unlike `HARD_RULES` they never force
+ * `send_back` on their own. */
+const HUMAN_REVIEW_FLOOR_RULES: ReadonlyArray<{ id: NoulId; threshold: number }> = [
+  { id: "touches_auth", threshold: 0.7 },
+  { id: "destructive_migration", threshold: 0.7 },
+  { id: "test_deletion_unjustified", threshold: 0.7 },
+];
+
+/**
+ * The code-fact rule for `test_deletion_unjustified`: when deterministic code facts already show
+ * tests were removed or disabled, the noul's premise is already established by observed evidence
+ * rather than model inference alone, so a lower probability is enough to warrant at least a human
+ * look — hence a lower threshold (0.5) than the model-only floor rule above (0.7).
+ */
+const TEST_DELETION_CODE_FACT_THRESHOLD = 0.5;
+
 const APPROVE_THRESHOLD = 0.75;
 const HUMAN_REVIEW_THRESHOLD = 0.5;
+
+export type ReviewEffortLabel = "skim" | "focused" | "deep" | "hands-on";
+
+const REVIEW_EFFORT_LABELS: readonly ReviewEffortLabel[] = ["skim", "focused", "deep", "hands-on"];
+
+/** `reviewer_effort` is reported alongside the composite but never folded into it: it measures how
+ * hard the change is to verify, not how good it is. */
+export interface ReviewEffortResult {
+  raw: number;
+  levels: number;
+  dominantLegend: string;
+  label: ReviewEffortLabel;
+}
 
 export interface PolicyResult {
   profile: Profile;
   weights: ProfileWeights;
   composite: number;
   dimensions: Record<DimensionId, DimensionResult>;
+  reviewEffort: ReviewEffortResult;
   flags: Flag[];
   hardRuleHits: NoulId[];
   decision: Decision;
@@ -174,6 +228,17 @@ function buildDimension(answer: ScoreAnswer): DimensionResult {
   };
 }
 
+function buildReviewEffort(answer: ScoreAnswer): ReviewEffortResult {
+  const dimension = buildDimension(answer);
+  const label = REVIEW_EFFORT_LABELS[Number(dimension.dominantLevel)] ?? REVIEW_EFFORT_LABELS[0];
+  return {
+    raw: dimension.raw,
+    levels: dimension.levels,
+    dominantLegend: dimension.dominantLegend,
+    label,
+  };
+}
+
 function levelFor(id: NoulId, probability: number): FlagLevel {
   const thresholds = NOUL_THRESHOLDS[id];
   if (probability >= thresholds.block) return "block";
@@ -191,8 +256,12 @@ function decisionFromComposite(composite: number): Decision {
  *
  * Pure and synchronous: no I/O. Safe to re-run in the browser whenever the user switches
  * profiles, against the same answers already returned by the one API call.
+ *
+ * `codeFacts` is optional (and defaults to having no effect) so existing callers/tests that only
+ * have answers, not a full `JudgeState`, keep working unchanged; pass `state.code_facts` wherever
+ * it's available (CLI, API route, UI, evaluation, and the GitHub Action all do).
  */
-export function decide(answers: JudgeAnswers, profile: Profile): PolicyResult {
+export function decide(answers: JudgeAnswers, profile: Profile, codeFacts?: CodeFacts): PolicyResult {
   const weights = PROFILE_WEIGHTS[profile];
 
   const dimensions: Record<DimensionId, DimensionResult> = {
@@ -201,6 +270,7 @@ export function decide(answers: JudgeAnswers, profile: Profile): PolicyResult {
     blast_radius: buildDimension(answers.blast_radius),
     description_quality: buildDimension(answers.description_quality),
   };
+  const reviewEffort = buildReviewEffort(answers.reviewer_effort);
 
   const safety = 1 - dimensions.blast_radius.normalized;
   const composite =
@@ -217,19 +287,37 @@ export function decide(answers: JudgeAnswers, profile: Profile): PolicyResult {
   const hardRuleHits: NoulId[] = HARD_RULES.filter((rule) => answers[rule.id].noul >= rule.threshold).map(
     (rule) => rule.id,
   );
+  const floorRuleHits: NoulId[] = HUMAN_REVIEW_FLOOR_RULES.filter(
+    (rule) => answers[rule.id].noul >= rule.threshold,
+  ).map((rule) => rule.id);
+
+  // The code-fact rule below can also hit `test_deletion_unjustified` at a lower threshold than
+  // `HUMAN_REVIEW_FLOOR_RULES` does; track it separately so it's still surfaced once in
+  // `hardRuleHits` even when the model-only floor rule didn't fire.
+  const testDeletionCodeFactHit =
+    codeFacts !== undefined &&
+    (codeFacts.test_files_removed.length > 0 || codeFacts.test_cases_disabled > 0) &&
+    answers.test_deletion_unjustified.noul >= TEST_DELETION_CODE_FACT_THRESHOLD;
 
   let decision = decisionFromComposite(composite);
   const breakingChangeHit = answers.breaking_change_unflagged.noul >= BREAKING_CHANGE_FLOOR_THRESHOLD;
   if (breakingChangeHit && decision === "approve") decision = "human_review";
+  if ((floorRuleHits.length > 0 || testDeletionCodeFactHit) && decision === "approve") decision = "human_review";
   if (hardRuleHits.length > 0) decision = "send_back";
+
+  const allHardRuleHits = [...hardRuleHits, ...floorRuleHits];
+  if (testDeletionCodeFactHit && !allHardRuleHits.includes("test_deletion_unjustified")) {
+    allHardRuleHits.push("test_deletion_unjustified");
+  }
 
   return {
     profile,
     weights,
     composite,
     dimensions,
+    reviewEffort,
     flags,
-    hardRuleHits,
+    hardRuleHits: allHardRuleHits,
     decision,
     modelVerdict: {
       choice: answers.verdict.choice,

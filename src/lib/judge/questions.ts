@@ -67,6 +67,22 @@ export function buildQuestions() {
       ] as const,
     ),
 
+    reviewer_effort: score(
+      "Look at the diff in `files` together with the title and body. How hard would it be for a " +
+        "human reviewer to VERIFY this change is correct — not how far the change reaches into the " +
+        "system (that is `blast_radius`), just how much work checking it takes.",
+      [
+        "Skim: mechanical or obvious change (rename, typo, config value, generated code); a reviewer " +
+          "can approve in under five minutes without running anything.",
+        "Focused read: one area of logic, 15–30 minutes; the change can be understood from the diff " +
+          "alone.",
+        "Deep review: several interacting areas or subtle logic (concurrency, caching, edge cases); " +
+          "needs domain context beyond the diff and likely a look at surrounding code.",
+        "Hands-on: a reviewer must pull the branch and run it, or a specialist (security, database, " +
+          "infrastructure) must review; the diff alone cannot establish correctness.",
+      ] as const,
+    ),
+
     claims_tests_without_evidence: noul(
       "Does the pull request body claim that tests were added, updated, or that they pass, while no " +
         "file in `files` looks like a test file (by path or name)?",
@@ -124,6 +140,59 @@ export function buildQuestions() {
         true: "The diff changes a public contract in a way that breaks callers, and the body says nothing about it.",
         false:
           "The diff makes no such breaking change, or the body explicitly flags it as a breaking change.",
+      },
+    ),
+
+    sql_injection_risk: noul(
+      "Does the diff in `files` add or modify a database query (SQL, or a raw-query API of an " +
+        "ORM) that is built by string concatenation, template interpolation, or format strings " +
+        "with values that could originate from user input, instead of parameterized queries or " +
+        "bound parameters?",
+      {
+        true:
+          "A query in the diff is assembled by concatenating or interpolating a value that could " +
+          "come from a user, rather than binding it as a parameter.",
+        false:
+          "Queries in the diff are parameterized, the interpolated values are clearly constants or " +
+          "identifiers controlled by code, or the diff has no query code at all.",
+      },
+    ),
+
+    touches_auth: noul(
+      "Does the diff in `files` change authentication, authorization, session handling, " +
+        "permission or role checks, token or cookie handling, CSRF/CORS configuration, or security " +
+        "middleware? Judge by what the code does, not only by file names — `code_facts.auth_paths_touched` " +
+        "is a hint (paths that merely mention auth-related words), not the answer.",
+      {
+        true: "The diff changes how authentication, authorization, sessions, or security middleware behave.",
+        false: "The diff makes no such change.",
+      },
+    ),
+
+    destructive_migration: noul(
+      "Does the diff in `files` add a schema or data migration (see `code_facts.migration_files_touched` " +
+        "for a path-based hint) that drops or renames a table or column, truncates or rewrites data, " +
+        "changes a column type lossily, or is otherwise not safely reversible, AND the body does not " +
+        "describe a backfill, rollback, or deployment-order plan for it?",
+      {
+        true:
+          "The diff adds a migration that is not safely reversible, and the body says nothing about " +
+          "a backfill, rollback, or deployment-order plan.",
+        false:
+          "There is no migration in the diff, the migration is purely additive, or the body states a plan.",
+      },
+    ),
+
+    test_deletion_unjustified: noul(
+      "If the diff removes, skips, or disables existing tests (see `code_facts.test_files_removed`, " +
+        "`code_facts.test_cases_removed`, and `code_facts.test_cases_disabled`), does the body fail to " +
+        "give a reason for doing so?",
+      {
+        true:
+          "Tests were removed, skipped, or disabled in the diff, and the body gives no reason (obsolete " +
+          "behavior, moved elsewhere, flaky with a linked issue, etc.) for it.",
+        false:
+          "No tests were removed, skipped, or disabled, or the body explains why they were.",
       },
     ),
 

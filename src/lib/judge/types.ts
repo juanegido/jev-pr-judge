@@ -1,4 +1,5 @@
 /** Shared domain types for the PR Judge demo. */
+import type { CodeFacts } from "./code-facts";
 
 /** One file changed by a pull request, as normalized from the GitHub API. */
 export interface PullRequestFile {
@@ -52,6 +53,7 @@ export interface JudgeState {
   };
   files: JudgeStateFile[];
   notes: string[];
+  code_facts: CodeFacts;
 }
 
 /** Named weighting profiles used by the policy layer. */

@@ -2,7 +2,15 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 
-import { decide, DIMENSION_IDS, DIMENSION_LABELS, NOUL_LABELS, type JudgeAnswers } from "@/lib/judge/policy";
+import type { CodeFacts } from "@/lib/judge/code-facts";
+import {
+  decide,
+  DIMENSION_IDS,
+  DIMENSION_LABELS,
+  NOUL_LABELS,
+  type JudgeAnswers,
+  type ReviewEffortLabel,
+} from "@/lib/judge/policy";
 import type { Profile } from "@/lib/judge/types";
 
 import { DimensionRow } from "./DimensionRow";
@@ -10,6 +18,13 @@ import { FlagsList } from "./FlagsList";
 import { ProfileSelect } from "./ProfileSelect";
 import { RawDetails } from "./RawDetails";
 import { VerdictCard } from "./VerdictCard";
+
+const REVIEW_EFFORT_TITLES: Record<ReviewEffortLabel, string> = {
+  skim: "Skim",
+  focused: "Focused read",
+  deep: "Deep review",
+  "hands-on": "Hands-on",
+};
 
 interface JudgeApiResponse {
   pr: {
@@ -27,6 +42,7 @@ interface JudgeApiResponse {
     truncated: number;
     notes: string[];
   };
+  code_facts: CodeFacts;
   answers: JudgeAnswers;
   usage?: { input_tokens: number; output_tokens: number };
   model: string;
@@ -44,7 +60,10 @@ export function JudgeContainer() {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<JudgeApiResponse | null>(null);
 
-  const policy = useMemo(() => (data ? decide(data.answers, profile) : null), [data, profile]);
+  const policy = useMemo(
+    () => (data ? decide(data.answers, profile, data.code_facts) : null),
+    [data, profile],
+  );
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -118,6 +137,16 @@ export function JudgeContainer() {
 
           <VerdictCard decision={policy.decision} modelVerdict={policy.modelVerdict} />
 
+          <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-500">
+              Estimated review effort
+            </p>
+            <p className="mt-2 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+              {REVIEW_EFFORT_TITLES[policy.reviewEffort.label]}
+            </p>
+            <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-500">{policy.reviewEffort.dominantLegend}</p>
+          </div>
+
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -151,6 +180,11 @@ export function JudgeContainer() {
                 {data.state_summary.notes.map((note) => (
                   <li key={note}>{note}</li>
                 ))}
+                <li>Code facts — test files removed: {data.code_facts.test_files_removed.length}</li>
+                <li>Code facts — test cases removed: {data.code_facts.test_cases_removed}</li>
+                <li>Code facts — test cases disabled: {data.code_facts.test_cases_disabled}</li>
+                <li>Code facts — migration files touched: {data.code_facts.migration_files_touched.length}</li>
+                <li>Code facts — auth paths touched: {data.code_facts.auth_paths_touched.length}</li>
               </ul>
             </RawDetails>
             <RawDetails summary="Raw answers">

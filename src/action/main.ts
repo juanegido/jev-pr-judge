@@ -118,10 +118,10 @@ async function run(): Promise<void> {
   const { owner, repo } = github.context.repo;
   const prUrl = `https://github.com/${owner}/${repo}/pull/${prNumber}`;
 
-  const { result } = await judgePullRequest(prUrl, { githubToken, apiKey });
+  const { state, result } = await judgePullRequest(prUrl, { githubToken, apiKey });
   // See src/lib/judge/policy.ts: the SDK's per-question generic type doesn't flow into our
   // looser, unit-testable `JudgeAnswers` shape without a cast at this one boundary.
-  const policy = decide(result.answers as unknown as JudgeAnswers, profile);
+  const policy = decide(result.answers as unknown as JudgeAnswers, profile, state.code_facts);
 
   core.setOutput("decision", policy.decision);
   core.setOutput("composite", policy.composite.toFixed(2));
@@ -133,7 +133,8 @@ async function run(): Promise<void> {
     policy,
     model: result.model,
     usage: result.usage,
-    repoUrl: "https://github.com/juanegido/pr-judge",
+    repoUrl: "https://github.com/juanegido/jev-pr-judge",
+    codeFacts: state.code_facts,
   });
 
   await core.summary.addRaw(body).write();

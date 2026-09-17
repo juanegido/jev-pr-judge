@@ -5,8 +5,10 @@ import {
   bodyClaimsTests,
   claimsTestsWithoutEvidenceProxy,
   leftoverDebugProxy,
+  migrationProxy,
   possibleSecretProxy,
   testFilesTouched,
+  touchesAuthProxy,
   touchesSharedInfraProxy,
   unmentionedDebtProxy,
 } from "./proxies";
@@ -135,4 +137,17 @@ test("touchesSharedInfraProxy flags manifests, CI config, and migrations", () =>
   assert.equal(touchesSharedInfraProxy([file("next.config.js")]), true);
   assert.equal(touchesSharedInfraProxy([file("db/migrations/001_init.sql")]), true);
   assert.equal(touchesSharedInfraProxy([file("src/components/Button.tsx")]), false);
+});
+
+test("touchesAuthProxy flags auth-sounding paths, case-insensitively", () => {
+  assert.equal(touchesAuthProxy([file("src/auth/session.ts")]), true);
+  assert.equal(touchesAuthProxy([file("src/middleware/JWT.ts")]), true);
+  assert.equal(touchesAuthProxy([file("src/components/Button.tsx")]), false);
+});
+
+test("migrationProxy flags migration directories, .sql, schema.prisma, and alembic", () => {
+  assert.equal(migrationProxy([file("db/migrations/001_init.sql")]), true);
+  assert.equal(migrationProxy([file("prisma/schema.prisma")]), true);
+  assert.equal(migrationProxy([file("backend/alembic/versions/abc.py")]), true);
+  assert.equal(migrationProxy([file("src/components/Button.tsx")]), false);
 });

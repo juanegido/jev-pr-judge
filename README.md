@@ -59,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # No checkout needed: the action reads the PR through the GitHub API.
-      - uses: juanegido/pr-judge@v1
+      - uses: juanegido/jev-pr-judge@v1
         with:
           typesafe-api-key: ${{ secrets.TYPESAFE_API_KEY }}
           profile: balanced
@@ -143,17 +143,51 @@ were not tuned on this data. Every caveat is spelled out in the report.
 
 ## How the questions are designed
 
-The heart of this demo is `src/lib/judge/questions.ts`: four **scores** (concrete, ordered
-rubrics), six **nouls** (yes/no red flags with explicit true/false criteria), and one **choice**
-(the model's own verdict). Each instruction is self-contained — question IDs are never sent to
-the model, and questions can't see each other's answers, so nothing beyond the bounded state and
-that one instruction string informs an answer. See the primitive docs this design follows:
+The heart of this demo is `src/lib/judge/questions.ts`: five **scores** (concrete, ordered
+rubrics — four of which feed the composite, plus `reviewer_effort`, which does not), ten
+**nouls** (yes/no red flags with explicit true/false criteria), and one **choice** (the model's
+own verdict). Each instruction is self-contained — question IDs are never sent to the model, and
+questions can't see each other's answers, so nothing beyond the bounded state and that one
+instruction string informs an answer. See the primitive docs this design follows:
 
 - [`score`](https://docs.typesafe.ai/primitives/score.md)
 - [`noul`](https://docs.typesafe.ai/primitives/noul.md)
 - [`choice`](https://docs.typesafe.ai/primitives/choice.md)
 - [Composite scoring pattern](https://docs.typesafe.ai/patterns/composite-scoring.md)
 - [JavaScript SDK](https://docs.typesafe.ai/sdk/javascript.md)
+
+### Code facts vs. model judgments
+
+Not everything PR Judge reports comes from the model. `src/lib/judge/code-facts.ts` computes a
+small set of **code facts** — deterministic, regex- and path-based counts like test files removed,
+test cases disabled, migration files touched, and auth-related paths touched — directly from the
+pull request's full diff, before any truncation. These facts are handed to the model as
+`code_facts` in the state (see `buildJudgeState` in `src/lib/judge/state.ts`), so the model reasons
+from observed evidence instead of re-deriving it from a possibly-truncated patch, and the policy
+layer can also use them directly, with no model call at all (see the code-fact rule below).
+
+The split is deliberate: anything a regex or path pattern can answer on its own (does this path
+look like a test file? does this path look like a migration?) is computed in code, not judged.
+Judgments (nouls and scores) are reserved for questions that need semantic understanding a pattern
+can't provide — whether a query is actually vulnerable to injection, whether a migration is safely
+reversible, whether removed tests were justified by the PR's own description.
+
+### Hard rules
+
+A handful of Noul answers bypass the composite entirely and are checked in `src/lib/judge/policy.ts`:
+
+- `possible_secret >= 0.7` → **send_back** (block), regardless of profile.
+- `claims_tests_without_evidence >= 0.8` → **send_back** (block).
+- `sql_injection_risk >= 0.7` → **send_back** (block).
+- `breaking_change_unflagged >= 0.75` → at least **human_review** (never approved outright).
+- `touches_auth >= 0.7` → at least **human_review**.
+- `destructive_migration >= 0.7` → at least **human_review**.
+- `test_deletion_unjustified >= 0.7` → at least **human_review**.
+- **Code-fact rule** (no model call): if `code_facts.test_files_removed` is non-empty or
+  `code_facts.test_cases_disabled > 0`, and `test_deletion_unjustified >= 0.5` → at least
+  **human_review**. The lower threshold (0.5 instead of 0.7) is deliberate: when the deterministic
+  facts already establish that tests were removed or disabled, a lower model probability is enough
+  to warrant a human look.
 
 ## Adding a profile
 

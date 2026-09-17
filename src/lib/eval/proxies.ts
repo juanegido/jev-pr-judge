@@ -8,9 +8,10 @@
  * proxy. They are regexes, not ground truth, and have their own false positives and negatives —
  * see `evaluation/REPORT.md`'s caveats section.
  */
+import { AUTH_PATH_PATTERN, MIGRATION_PATH_PATTERN } from "@/lib/judge/code-facts";
 import type { PullRequest, PullRequestFile } from "@/lib/judge/types";
+import { TEST_FILE_PATTERN } from "@/lib/shared/test-file-pattern";
 
-const TEST_FILE_PATTERN = /(\.|_)(test|spec)\.[jt]sx?$|__tests__\/|(^|\/)tests?\//;
 const BODY_CLAIMS_TESTS_PATTERN = /\b(test|tests|tested|testing|unit test|e2e|coverage)\b/i;
 // `debugger` must stand alone as a statement so prose like "debugger-friendly" doesn't match.
 const DEBUG_STATEMENT_PATTERN =
@@ -95,6 +96,26 @@ export function touchesSharedInfraProxy(files: readonly PullRequestFile[]): bool
   return files.some((file) => SHARED_INFRA_PATH_PATTERN.test(file.path));
 }
 
+/**
+ * Path-only proxy for `touches_auth`, built from the same `AUTH_PATH_PATTERN` as
+ * `code_facts.auth_paths_touched`. Unlike the Noul, it can't tell whether the code at that path
+ * actually changed auth *behavior* — it only sees that an auth-sounding path was touched — so it
+ * is best read as an independent-ish sanity check on a semantic judgment, not a ground truth.
+ */
+export function touchesAuthProxy(files: readonly PullRequestFile[]): boolean {
+  return files.some((file) => AUTH_PATH_PATTERN.test(file.path));
+}
+
+/**
+ * Path-only proxy for `destructive_migration`, built from the same `MIGRATION_PATH_PATTERN` as
+ * `code_facts.migration_files_touched`. It only detects that a migration file exists in the diff,
+ * not whether that migration is destructive or lacks a stated plan, so recall against the Noul is
+ * expected to be much higher than precision.
+ */
+export function migrationProxy(files: readonly PullRequestFile[]): boolean {
+  return files.some((file) => MIGRATION_PATH_PATTERN.test(file.path));
+}
+
 export interface ProxyResults {
   test_files_touched: boolean;
   body_claims_tests: boolean;
@@ -103,6 +124,8 @@ export interface ProxyResults {
   possible_secret_proxy: boolean;
   unmentioned_debt_proxy: boolean;
   touches_shared_infra_proxy: boolean;
+  touches_auth_proxy: boolean;
+  migration_proxy: boolean;
 }
 
 /** Compute every deterministic proxy for one pull request in one pass. */
@@ -115,5 +138,7 @@ export function computeProxies(pr: Pick<PullRequest, "body" | "files">): ProxyRe
     possible_secret_proxy: possibleSecretProxy(pr.files),
     unmentioned_debt_proxy: unmentionedDebtProxy(pr),
     touches_shared_infra_proxy: touchesSharedInfraProxy(pr.files),
+    touches_auth_proxy: touchesAuthProxy(pr.files),
+    migration_proxy: migrationProxy(pr.files),
   };
 }

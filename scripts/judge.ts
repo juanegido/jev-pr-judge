@@ -6,6 +6,7 @@
  *        npx tsx scripts/judge.ts <pr-url> --dump-request   # print the System One payload, no API call
  */
 import { fetchPullRequest, GitHubUpstreamError, PrNotFoundError, PrUrlError } from "../src/lib/github/fetch-pr";
+import type { CodeFacts } from "../src/lib/judge/code-facts";
 import { MissingApiKeyError } from "../src/lib/judge/errors";
 import { loadEnvFiles } from "./lib/env";
 import { judgePullRequest } from "../src/lib/judge/judge";
@@ -18,8 +19,16 @@ import {
   NOUL_LABELS,
   type JudgeAnswers,
   type PolicyResult,
+  type ReviewEffortLabel,
 } from "../src/lib/judge/policy";
 import { PROFILES, type JudgeState, type PullRequest, type Profile } from "../src/lib/judge/types";
+
+const REVIEW_EFFORT_TITLES: Record<ReviewEffortLabel, string> = {
+  skim: "Skim",
+  focused: "Focused read",
+  deep: "Deep review",
+  "hands-on": "Hands-on",
+};
 
 function parseArgs(argv: string[]): { url?: string; profile: Profile; json: boolean; dumpRequest: boolean } {
   let url: string | undefined;
@@ -58,6 +67,7 @@ function printSummary(
   policy: PolicyResult,
   model: string,
   usage: { input_tokens: number; output_tokens: number } | undefined,
+  codeFacts: CodeFacts,
 ): void {
   console.log(`\n${pr.owner}/${pr.repo}#${pr.number}: ${pr.title}`);
   console.log(`by ${pr.author} · +${pr.additions} -${pr.deletions} across ${pr.changedFiles} file(s)\n`);
@@ -67,6 +77,9 @@ function printSummary(
     `Model verdict:    ${policy.modelVerdict.choice} (${Math.round(policy.modelVerdict.confidence * 100)}% confidence)`,
   );
   console.log(`Composite score:  ${Math.round(policy.composite * 100)}%  [profile: ${profile}]`);
+  console.log(
+    `Review effort:    ${REVIEW_EFFORT_TITLES[policy.reviewEffort.label]} (${policy.reviewEffort.raw.toFixed(1)}/${policy.reviewEffort.levels - 1})  ${policy.reviewEffort.dominantLegend}`,
+  );
 
   console.log("\nDimensions:");
   for (const id of DIMENSION_IDS) {
@@ -85,6 +98,14 @@ function printSummary(
       `  ${(noulLabels[flag.id] ?? flag.id).padEnd(28)} ${Math.round(flag.probability * 100)}% (${flag.level})${marker}`,
     );
   }
+
+  console.log("\nCode facts:");
+  console.log(`  Test files removed:        ${codeFacts.test_files_removed.length}`);
+  console.log(`  Test cases removed:        ${codeFacts.test_cases_removed}`);
+  console.log(`  Test cases disabled:       ${codeFacts.test_cases_disabled}`);
+  console.log(`  Migration files touched:   ${codeFacts.migration_files_touched.length}`);
+  console.log(`  Auth paths touched:        ${codeFacts.auth_paths_touched.length}`);
+  console.log(`  Files removed:             ${codeFacts.files_removed}`);
 
   console.log(`\nModel: ${model}`);
   if (usage) {
@@ -122,7 +143,7 @@ async function main(): Promise<void> {
     const { pr, state, result } = await judgePullRequest(url, { githubToken: process.env.GITHUB_TOKEN });
     // See policy.ts: the SDK's per-question generic type doesn't flow into our looser,
     // unit-testable `JudgeAnswers` shape without a cast at this one boundary.
-    const policy = decide(result.answers as unknown as JudgeAnswers, profile);
+    const policy = decide(result.answers as unknown as JudgeAnswers, profile, state.code_facts);
 
     if (json) {
       console.log(
@@ -130,6 +151,7 @@ async function main(): Promise<void> {
           {
             pr,
             state_summary: summarizeState(state),
+            code_facts: state.code_facts,
             answers: result.answers,
             usage: result.usage,
             model: result.model,
@@ -142,7 +164,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    printSummary(pr, profile, policy, result.model, result.usage);
+    printSummary(pr, profile, policy, result.model, result.usage, state.code_facts);
   } catch (error) {
     if (
       error instanceof MissingApiKeyError ||

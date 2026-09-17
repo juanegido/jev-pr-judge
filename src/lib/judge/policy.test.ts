@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import type { CodeFacts } from "./code-facts";
 import { decide, PROFILE_WEIGHTS, type JudgeAnswers } from "./policy";
 import { PROFILES, type Profile } from "./types";
 
@@ -33,17 +34,33 @@ function cleanFixture(): JudgeAnswers {
     test_evidence: scoreAnswer(3),
     blast_radius: scoreAnswer(0),
     description_quality: scoreAnswer(3),
+    reviewer_effort: scoreAnswer(0),
     claims_tests_without_evidence: noulAnswer(0.02),
     out_of_scope_changes: noulAnswer(0.02),
     unmentioned_debt: noulAnswer(0.02),
     leftover_debug: noulAnswer(0.02),
     possible_secret: noulAnswer(0.01),
     breaking_change_unflagged: noulAnswer(0.02),
+    sql_injection_risk: noulAnswer(0.02),
+    touches_auth: noulAnswer(0.02),
+    destructive_migration: noulAnswer(0.02),
+    test_deletion_unjustified: noulAnswer(0.02),
     verdict: {
       choice: "approve",
       confidence: 0.95,
       probabilities: { approve: 0.95, human_review: 0.04, send_back: 0.01 },
     },
+  };
+}
+
+function emptyCodeFacts(): CodeFacts {
+  return {
+    test_files_removed: [],
+    test_cases_removed: 0,
+    test_cases_disabled: 0,
+    migration_files_touched: [],
+    auth_paths_touched: [],
+    files_removed: 0,
   };
 }
 
@@ -122,4 +139,76 @@ test("switching profiles recomputes purely from the same answers", () => {
   // Different weightings over identical inputs should not collapse to one identical number.
   const distinctValues = new Set(Object.values(results));
   assert.ok(distinctValues.size > 1);
+});
+
+test("a SQL injection risk forces BLOCK (send_back) regardless of profile", () => {
+  const answers = cleanFixture();
+  answers.sql_injection_risk = noulAnswer(0.9);
+
+  for (const profile of PROFILES) {
+    const result = decide(answers, profile);
+    assert.equal(result.decision, "send_back", `expected send_back under ${profile}`);
+    assert.ok(result.hardRuleHits.includes("sql_injection_risk"));
+  }
+});
+
+test("touches_auth is never approved outright", () => {
+  const answers = cleanFixture();
+  answers.touches_auth = noulAnswer(0.8);
+  const result = decide(answers, "balanced");
+  assert.notEqual(result.decision, "approve");
+  assert.ok(result.hardRuleHits.includes("touches_auth"));
+});
+
+test("destructive_migration is never approved outright", () => {
+  const answers = cleanFixture();
+  answers.destructive_migration = noulAnswer(0.8);
+  const result = decide(answers, "balanced");
+  assert.notEqual(result.decision, "approve");
+  assert.ok(result.hardRuleHits.includes("destructive_migration"));
+});
+
+test("test_deletion_unjustified is never approved outright once past its own floor threshold", () => {
+  const answers = cleanFixture();
+  answers.test_deletion_unjustified = noulAnswer(0.8);
+  const result = decide(answers, "balanced");
+  assert.notEqual(result.decision, "approve");
+  assert.ok(result.hardRuleHits.includes("test_deletion_unjustified"));
+});
+
+test("reviewer_effort is excluded from the composite score", () => {
+  const low = decide(cleanFixture(), "balanced");
+  const answers = cleanFixture();
+  answers.reviewer_effort = scoreAnswer(3);
+  const high = decide(answers, "balanced");
+  assert.equal(high.composite, low.composite);
+});
+
+test("reviewer_effort is reported with its own label, separate from the dimensions", () => {
+  const answers = cleanFixture();
+  answers.reviewer_effort = scoreAnswer(2);
+  const result = decide(answers, "balanced");
+  assert.equal(result.reviewEffort.label, "deep");
+  assert.equal(result.reviewEffort.raw, 2);
+});
+
+test("the code-fact rule bumps test_deletion_unjustified to at least human_review at a lower threshold than the model-only floor", () => {
+  const answers = cleanFixture();
+  answers.test_deletion_unjustified = noulAnswer(0.6); // below the 0.7 model-only floor rule threshold
+  const codeFacts: CodeFacts = { ...emptyCodeFacts(), test_files_removed: ["src/foo.test.ts"] };
+
+  const withoutCodeFacts = decide(answers, "balanced");
+  assert.equal(withoutCodeFacts.decision, "approve");
+  assert.ok(!withoutCodeFacts.hardRuleHits.includes("test_deletion_unjustified"));
+
+  const withCodeFacts = decide(answers, "balanced", codeFacts);
+  assert.notEqual(withCodeFacts.decision, "approve");
+  assert.ok(withCodeFacts.hardRuleHits.includes("test_deletion_unjustified"));
+});
+
+test("the code-fact rule does not fire when no tests were removed or disabled", () => {
+  const answers = cleanFixture();
+  answers.test_deletion_unjustified = noulAnswer(0.6);
+  const result = decide(answers, "balanced", emptyCodeFacts());
+  assert.equal(result.decision, "approve");
 });
