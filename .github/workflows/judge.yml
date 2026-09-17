@@ -1,0 +1,26 @@
+name: PR Judge
+
+# Dogfooding workflow: judges every pull request against this repository with its own action.
+#
+# PRs opened from forks do not receive repository secrets, so `TYPESAFE_API_KEY` is empty and
+# this step fails for fork PRs unless the maintainer reruns it (or switches to a
+# `pull_request_target`-based trigger, which is out of scope here).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  judge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./
+        with:
+          typesafe-api-key: ${{ secrets.TYPESAFE_API_KEY }}
+          profile: balanced
+          fail-on: none

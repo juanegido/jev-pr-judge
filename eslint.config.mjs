@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated, minified bundle for the GitHub Action; not hand-written source.
+    "dist/**",
   ]),
 ]);
 

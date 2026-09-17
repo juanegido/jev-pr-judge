@@ -7,11 +7,14 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test src/lib/judge/policy.test.ts src/lib/judge/state.test.ts src/lib/github/fetch-pr.test.ts src/lib/eval/proxies.test.ts",
+    "test": "tsx --test src/lib/judge/policy.test.ts src/lib/judge/state.test.ts src/lib/github/fetch-pr.test.ts src/lib/eval/proxies.test.ts src/action/render.test.ts",
     "evaluate": "tsx scripts/evaluate.ts",
-    "report": "tsx scripts/report.ts"
+    "report": "tsx scripts/report.ts",
+    "build:action": "esbuild src/action/main.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/action/index.js --alias:@=./src"
   },
   "dependencies": {
+    "@actions/core": "^3.0.1",
+    "@actions/github": "^9.1.1",
     "@typesafe-ai/sdk": "^0.6.0",
     "next": "16.3.5",
     "react": "19.2.8",
@@ -22,6 +25,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "tailwindcss": "^4",

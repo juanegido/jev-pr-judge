@@ -1,0 +1,49 @@
+name: "PR Judge"
+description: "Typed verdicts on pull requests with TypeSafe System One"
+branding:
+  icon: "check-square"
+  color: "purple"
+
+inputs:
+  typesafe-api-key:
+    description: "TypeSafe API key used to call System One. Get one at https://typesafe.ai."
+    required: true
+  github-token:
+    description: "Token used to read the pull request and post the sticky comment."
+    required: false
+    default: ${{ github.token }}
+  profile:
+    description: "Weighting profile: balanced, hotfix, refactor, or docs."
+    required: false
+    default: "balanced"
+  comment:
+    description: "Whether to post (or update) a sticky comment on the pull request."
+    required: false
+    default: "true"
+  fail-on:
+    description: >
+      Fail the step when the policy decision is at least this severe: none, send_back, or
+      human_review (human_review also fails on send_back).
+    required: false
+    default: "none"
+  pr-number:
+    description: "Pull request number to judge. Defaults to the number from the triggering event."
+    required: false
+
+outputs:
+  decision:
+    description: "The policy decision: approve, human_review, or send_back."
+  composite:
+    description: "The composite score, 0-1 with two decimals."
+  model-verdict:
+    description: "The model's own verdict choice."
+  model-verdict-confidence:
+    description: "Confidence of the model's verdict, 0-1 with two decimals."
+  hard-rule-hits:
+    description: "Comma-separated ids of any hard rules that fired."
+  comment-url:
+    description: "URL of the posted or updated sticky comment; empty if comment was not posted."
+
+runs:
+  using: "node20"
+  main: "dist/action/index.js"

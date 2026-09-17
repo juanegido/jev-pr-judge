@@ -29,3 +29,9 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Build action bundle
+        run: npm run build:action
+
+      - name: Fail if the action bundle is stale
+        run: git diff --exit-code -- dist/

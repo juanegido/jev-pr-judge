@@ -39,6 +39,61 @@ npm run dev
 Open [http://localhost:3000](http://localhost:3000), paste a pull request URL, pick a profile,
 and click Judge.
 
+## Use it as a GitHub Action
+
+PR Judge also runs as a GitHub Action: it judges the current pull request and posts one sticky
+comment with the verdict (updating it in place on later pushes rather than piling up comments).
+
+```yaml
+name: PR Judge
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  judge:
+    runs-on: ubuntu-latest
+    steps:
+      # No checkout needed: the action reads the PR through the GitHub API.
+      - uses: juanegido/pr-judge@v1
+        with:
+          typesafe-api-key: ${{ secrets.TYPESAFE_API_KEY }}
+          profile: balanced
+          fail-on: none
+```
+
+### Inputs
+
+| Input | Default | Description |
+| --- | --- | --- |
+| `typesafe-api-key` | *(required)* | TypeSafe API key used to call System One. |
+| `github-token` | `${{ github.token }}` | Token used to read the pull request and post the comment. |
+| `profile` | `balanced` | One of `balanced`, `hotfix`, `refactor`, `docs`. |
+| `comment` | `true` | Post/update a sticky PR comment. Always writes to the job summary as well. |
+| `fail-on` | `none` | One of `none`, `send_back`, `human_review`. Fails the step when the decision is at least this severe (`human_review` also fails on `send_back`). |
+| `pr-number` | *(event's PR)* | Override the pull request number to judge. |
+
+### Outputs
+
+| Output | Description |
+| --- | --- |
+| `decision` | `approve`, `human_review`, or `send_back`. |
+| `composite` | Composite score, `0`–`1` with two decimals. |
+| `model-verdict` | The model's own verdict choice. |
+| `model-verdict-confidence` | Confidence of the model's verdict, `0`–`1` with two decimals. |
+| `hard-rule-hits` | Comma-separated ids of any hard rules that fired. |
+| `comment-url` | URL of the posted/updated comment; empty if `comment` is `false`. |
+
+Pull requests from forks do not receive repository secrets, so `typesafe-api-key` is empty and
+the step fails for fork PRs unless the maintainer reruns it with access to the secret.
+
+The action only reads the pull request through the GitHub API — it never checks out or executes
+the pull request's code.
+
 ## CLI usage
 
 ```bash
