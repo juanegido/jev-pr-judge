@@ -12,8 +12,13 @@ import type { PullRequest, PullRequestFile } from "@/lib/judge/types";
 
 const TEST_FILE_PATTERN = /(\.|_)(test|spec)\.[jt]sx?$|__tests__\/|(^|\/)tests?\//;
 const BODY_CLAIMS_TESTS_PATTERN = /\b(test|tests|tested|testing|unit test|e2e|coverage)\b/i;
+// `debugger` must stand alone as a statement so prose like "debugger-friendly" doesn't match.
 const DEBUG_STATEMENT_PATTERN =
-  /console\.(log|debug|trace)\(|(^|\W)debugger;?|(^|\W)print\(|dbg!\(|binding\.pry/;
+  /console\.(log|debug|trace)\(|(^|[+;{}\s])debugger\s*;?\s*$|(^|\W)print\(|dbg!\(|binding\.pry/;
+// Files where printing to the console is the job, not a leftover: docs and CLI-style scripts.
+const PROSE_OR_CLI_PATH_PATTERN = /\.(md|mdx|txt|rst)$|(^|\/)(scripts?|bin|tools)\//;
+// Added lines that are comments in common syntaxes (after the leading "+").
+const COMMENT_LINE_PATTERN = /^\+\s*(\/\/|\/\*|\*|#)/;
 const SECRET_PATTERNS: readonly RegExp[] = [
   /AKIA[0-9A-Z]{16}/,
   /sk-[A-Za-z0-9]{20,}/,
@@ -48,11 +53,19 @@ export function claimsTestsWithoutEvidenceProxy(pr: Pick<PullRequest, "body" | "
   return bodyClaimsTests(pr.body) && !testFilesTouched(pr.files);
 }
 
-/** Any added line in a non-test file looks like a debug statement (console.log, debugger, etc). */
+/**
+ * Any added, non-comment line in a non-test, non-docs, non-CLI file looks like a debug
+ * statement (console.log, debugger, etc). The first evaluation run showed the naive version
+ * firing on Markdown prose, code comments and scripts whose purpose is to print.
+ */
 export function leftoverDebugProxy(files: readonly PullRequestFile[]): boolean {
   return files.some((file) => {
-    if (TEST_FILE_PATTERN.test(file.path) || !file.patch) return false;
-    return addedLines(file.patch).some((line) => DEBUG_STATEMENT_PATTERN.test(line));
+    if (TEST_FILE_PATTERN.test(file.path) || PROSE_OR_CLI_PATH_PATTERN.test(file.path) || !file.patch) {
+      return false;
+    }
+    return addedLines(file.patch).some(
+      (line) => !COMMENT_LINE_PATTERN.test(line) && DEBUG_STATEMENT_PATTERN.test(line),
+    );
   });
 }
 

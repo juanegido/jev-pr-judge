@@ -67,9 +67,23 @@ test("leftoverDebugProxy ignores debug statements added inside test files", () =
 
 test("leftoverDebugProxy matches debugger, print, dbg!, and binding.pry", () => {
   assert.equal(leftoverDebugProxy([file("a.ts", "+debugger;")]), true);
+  assert.equal(leftoverDebugProxy([file("a.ts", "+  debugger")]), true);
   assert.equal(leftoverDebugProxy([file("a.py", "+print('x')")]), true);
   assert.equal(leftoverDebugProxy([file("a.rs", "+dbg!(x);")]), true);
   assert.equal(leftoverDebugProxy([file("a.rb", "+binding.pry")]), true);
+});
+
+// Regression cases from the first excalidraw evaluation run: all three were proxy false positives.
+test("leftoverDebugProxy ignores 'debugger' inside prose and comments", () => {
+  assert.equal(leftoverDebugProxy([file("AGENTS.md", "+- Development JS retains debugger-friendly sources")]), false);
+  assert.equal(leftoverDebugProxy([file("src/build.js", "+    // retain sources in debugger-only builds.")]), false);
+  assert.equal(leftoverDebugProxy([file("src/build.js", "+  # print(debug) is disabled here")]), false);
+});
+
+test("leftoverDebugProxy ignores console output in CLI-style scripts", () => {
+  assert.equal(leftoverDebugProxy([file("scripts/fork-check.js", "+  console.log(result)")]), false);
+  assert.equal(leftoverDebugProxy([file("bin/cli.ts", "+console.log('usage')")]), false);
+  assert.equal(leftoverDebugProxy([file("src/app.ts", "+console.log(result)")]), true);
 });
 
 test("possibleSecretProxy flags an added AWS-style access key", () => {
