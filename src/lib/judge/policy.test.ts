@@ -206,6 +206,18 @@ test("the code-fact rule bumps test_deletion_unjustified to at least human_revie
   assert.ok(withCodeFacts.hardRuleHits.includes("test_deletion_unjustified"));
 });
 
+// Regression from the second excalidraw run: #12110 removed two test cases inside an existing
+// test file, the model scored 0.68, and the rule missed it because only whole-file removals and
+// disabled cases were counted as the premise.
+test("the code-fact rule also fires when individual test cases were removed", () => {
+  const answers = cleanFixture();
+  answers.test_deletion_unjustified = noulAnswer(0.6);
+  const codeFacts: CodeFacts = { ...emptyCodeFacts(), test_cases_removed: 2 };
+  const result = decide(answers, "balanced", codeFacts);
+  assert.notEqual(result.decision, "approve");
+  assert.ok(result.hardRuleHits.includes("test_deletion_unjustified"));
+});
+
 test("the code-fact rule does not fire when no tests were removed or disabled", () => {
   const answers = cleanFixture();
   answers.test_deletion_unjustified = noulAnswer(0.6);

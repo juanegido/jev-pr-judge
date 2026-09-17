@@ -25566,7 +25566,7 @@ function decide(answers, profile, codeFacts) {
   const floorRuleHits = HUMAN_REVIEW_FLOOR_RULES.filter(
     (rule) => answers[rule.id].noul >= rule.threshold
   ).map((rule) => rule.id);
-  const testDeletionCodeFactHit = codeFacts !== void 0 && (codeFacts.test_files_removed.length > 0 || codeFacts.test_cases_disabled > 0) && answers.test_deletion_unjustified.noul >= TEST_DELETION_CODE_FACT_THRESHOLD;
+  const testDeletionCodeFactHit = codeFacts !== void 0 && (codeFacts.test_files_removed.length > 0 || codeFacts.test_cases_removed > 0 || codeFacts.test_cases_disabled > 0) && answers.test_deletion_unjustified.noul >= TEST_DELETION_CODE_FACT_THRESHOLD;
   let decision = decisionFromComposite(composite);
   const breakingChangeHit = answers.breaking_change_unflagged.noul >= BREAKING_CHANGE_FLOOR_THRESHOLD;
   if (breakingChangeHit && decision === "approve") decision = "human_review";

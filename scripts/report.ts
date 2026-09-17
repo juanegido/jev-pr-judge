@@ -151,6 +151,7 @@ function sectionSample(rows: EvalRow[]): string {
   );
 
   const withTestFilesRemoved = rows.filter((r) => r.code_facts.test_files_removed > 0).length;
+  const withTestCasesRemoved = rows.filter((r) => r.code_facts.test_cases_removed > 0).length;
   const withTestCasesDisabled = rows.filter((r) => r.code_facts.test_cases_disabled > 0).length;
   const withMigrations = rows.filter((r) => r.code_facts.migration_files_touched > 0).length;
   const withAuthPaths = rows.filter((r) => r.code_facts.auth_paths_touched > 0).length;
@@ -162,6 +163,7 @@ function sectionSample(rows: EvalRow[]): string {
     "| Fact | PRs | % |",
     "| --- | --- | --- |",
     `| Test files removed | ${withTestFilesRemoved} | ${pct(withTestFilesRemoved, rows.length)} |`,
+    `| Test cases removed (inside kept files) | ${withTestCasesRemoved} | ${pct(withTestCasesRemoved, rows.length)} |`,
     `| Test cases disabled | ${withTestCasesDisabled} | ${pct(withTestCasesDisabled, rows.length)} |`,
     `| Migration files touched | ${withMigrations} | ${pct(withMigrations, rows.length)} |`,
     `| Auth paths touched | ${withAuthPaths} | ${pct(withAuthPaths, rows.length)} |`,

@@ -296,7 +296,9 @@ export function decide(answers: JudgeAnswers, profile: Profile, codeFacts?: Code
   // `hardRuleHits` even when the model-only floor rule didn't fire.
   const testDeletionCodeFactHit =
     codeFacts !== undefined &&
-    (codeFacts.test_files_removed.length > 0 || codeFacts.test_cases_disabled > 0) &&
+    (codeFacts.test_files_removed.length > 0 ||
+      codeFacts.test_cases_removed > 0 ||
+      codeFacts.test_cases_disabled > 0) &&
     answers.test_deletion_unjustified.noul >= TEST_DELETION_CODE_FACT_THRESHOLD;
 
   let decision = decisionFromComposite(composite);
