@@ -1,0 +1,147 @@
+{
+  "model": "jev-latest",
+  "state": {
+    "pull_request": {
+      "title": "Added css using aphrodite",
+      "body": "Added css using aphrodite.\n\nNote: I'm using cjs syntax on lib/css.js since babel was adding es2015 imports for the runtime polyfills breaking the build. I'm sure this can be fixed easily\n\nI'm adding the tests in another pr\n",
+      "author": "impronunciable",
+      "base_branch": "master",
+      "head_branch": "add/css",
+      "stats": {
+        "additions": 19,
+        "deletions": 7,
+        "changed_files": 4
+      }
+    },
+    "files": [
+      {
+        "path": "lib/css.js",
+        "status": "added",
+        "additions": 1,
+        "deletions": 0,
+        "patch": "@@ -0,0 +1 @@\n+module.exports = require('aphrodite')"
+      },
+      {
+        "path": "lib/document.js",
+        "status": "modified",
+        "additions": 5,
+        "deletions": 2,
+        "patch": "@@ -25,10 +25,13 @@ export default class Document extends Component {\n }\n \n export function Head (props, context) {\n-  const { head } = context._documentProps\n+  const { head, css } = context._documentProps\n   const h = (head || [])\n   .map((h, i) => React.cloneElement(h, { key: '_next' + i }))\n-  return <head>{h}</head>\n+  return <head>\n+    {h}\n+    <style data-aphrodite>{css.content}</style>\n+  </head>\n }\n \n Head.contextTypes = { _documentProps: PropTypes.any }"
+      },
+      {
+        "path": "package.json",
+        "status": "modified",
+        "additions": 2,
+        "deletions": 0,
+        "patch": "@@ -14,6 +14,7 @@\n     \"test\": \"ava\"\n   },\n   \"dependencies\": {\n+    \"aphrodite\": \"0.5.0\",\n     \"babel-core\": \"6.17.0\",\n     \"babel-generator\": \"6.17.0\",\n     \"babel-loader\": \"6.2.5\",\n@@ -41,6 +42,7 @@\n   },\n   \"devDependencies\": {\n     \"ava\": \"0.16.0\",\n+    \"del\": \"2.2.2\",\n     \"gulp\": \"3.9.1\",\n     \"gulp-babel\": \"6.1.2\",\n     \"gulp-cached\": \"1.1.0\","
+      },
+      {
+        "path": "server/render.js",
+        "status": "modified",
+        "additions": 11,
+        "deletions": 5,
+        "patch": "@@ -4,6 +4,7 @@ import { renderToString, renderToStaticMarkup } from 'react-dom/server'\n import fs from 'mz/fs'\n import Document from '../lib/document'\n import App from '../lib/app'\n+import { StyleSheetServer } from '../lib/css'\n \n export async function render (path, req, res, { root = process.cwd() } = {}) {\n   const mod = require(resolve(root, '.next', 'pages', path)) || {}\n@@ -17,15 +18,20 @@ export async function render (path, req, res, { root = process.cwd() } = {}) {\n   const bundlePath = resolve(root, '.next', '.next', 'pages', path || 'index.js')\n   const component = await fs.readFile(bundlePath, 'utf8')\n \n-  const app = createElement(App, {\n-    Component,\n-    props,\n-    router: {}\n+  const { html, css } = StyleSheetServer.renderStatic(() => {\n+    const app = createElement(App, {\n+      Component,\n+      props,\n+      router: {}\n+    })\n+\n+    return renderToString(app)\n   })\n \n   const doc = createElement(Document, {\n     head: [],\n-    html: renderToString(app),\n+    html: html,\n+    css: css,\n     data: { component },\n     hotReload: false\n   })"
+      }
+    ],
+    "notes": []
+  },
+  "questions": {
+    "scope_adherence": {
+      "type": "score",
+      "instructions": "Look at the pull request's title, body, and the diffs in `files`. How well does the diff match what the title and body describe? Judge only whether the stated intent and the actual change line up, not whether the change is a good idea.",
+      "criteria": [
+        "The diff does something clearly different from what the title and body describe; a reviewer reading only the description would not predict this diff.",
+        "The diff mostly matches the description, but includes noticeable pieces of unrelated or unexplained work.",
+        "The diff matches the description, with only minor loose ends a careful reviewer would want called out.",
+        "Every change in the diff is accounted for by the title and body; nothing unexplained remains."
+      ]
+    },
+    "test_evidence": {
+      "type": "score",
+      "instructions": "Look at whether the diff in `files` changes runtime behavior, and whether test files were touched to cover that change. A file counts as a test file if its path or name marks it as one (e.g. `test`, `spec`, `__tests__`). Docs-only or config-only diffs with no behavior change should score at the top: there is nothing to test.",
+      "criteria": [
+        "Behavior changed in the diff, but no test files were touched at all.",
+        "Test files were touched, but the changes do not exercise the behavior that actually changed.",
+        "Tests were added or updated and touch the changed behavior, but coverage of the important cases looks thin.",
+        "New or updated tests directly target the changed behavior and its main edge cases, or the diff has no behavior change (docs/config only) so there is nothing to test."
+      ]
+    },
+    "blast_radius": {
+      "type": "score",
+      "instructions": "Look at the files changed in the diff. How far does this change reach into the rest of the system if something about it is wrong?",
+      "criteria": [
+        "The change is an isolated leaf: one module, a doc file, or test-only code that nothing else depends on.",
+        "The change touches a shared internal module or a handful of call sites, but stays inside one part of the app.",
+        "The change touches a boundary several parts of the app rely on, such as a shared library, a widely-imported utility, or an internal API used by multiple callers.",
+        "The change touches shared infrastructure: build or deploy config, CI pipelines, auth, database schema or migrations, a public API contract, or dependency manifests."
+      ]
+    },
+    "description_quality": {
+      "type": "score",
+      "instructions": "Look only at the pull request's body text (not the diff). Does it explain why the change is needed and how it works, not just what changed?",
+      "criteria": [
+        "The body is empty, or just restates the title in one line.",
+        "The body says what changed, but not why or how.",
+        "The body explains why the change is needed and roughly how it works, but skips trade-offs or how to verify it.",
+        "The body explains the motivation, the approach, any trade-offs considered, and how to verify the change."
+      ]
+    },
+    "claims_tests_without_evidence": {
+      "type": "noul",
+      "instructions": "Does the pull request body claim that tests were added, updated, or that they pass, while no file in `files` looks like a test file (by path or name)?",
+      "criteria": {
+        "true": "The body mentions tests (e.g. \"added tests\", \"tests pass\", \"covered by tests\") but no file in the diff looks like a test file.",
+        "false": "The body makes no claim about tests, or the diff does include changes to test files."
+      }
+    },
+    "out_of_scope_changes": {
+      "type": "noul",
+      "instructions": "Does the diff in `files` include changes that are not mentioned anywhere in the title or body, such as drive-by refactors, reformatting of unrelated files, or renames unrelated to the stated purpose?",
+      "criteria": {
+        "true": "Part of the diff has no connection to anything the title or body describes.",
+        "false": "Every part of the diff traces back to something the title or body describes."
+      }
+    },
+    "unmentioned_debt": {
+      "type": "noul",
+      "instructions": "Does the diff in `files` add TODO/FIXME/HACK comments, commented-out code, newly skipped or disabled tests, or any-style escape hatches, without the body mentioning this added debt?",
+      "criteria": {
+        "true": "The diff adds one or more of these and the body says nothing about it.",
+        "false": "The diff adds none of these, or the body explicitly calls out the trade-off."
+      }
+    },
+    "leftover_debug": {
+      "type": "noul",
+      "instructions": "Does the diff in `files` add debug statements such as console.log, print, debugger, dbg!, or binding.pry in non-test code?",
+      "criteria": {
+        "true": "Non-test code in the diff adds one or more debug statements.",
+        "false": "No debug statements were added in non-test code."
+      }
+    },
+    "possible_secret": {
+      "type": "noul",
+      "instructions": "Does the diff in `files` add anything that looks like a real credential: an API key, an access or bearer token, a private key, or a connection string containing a password?",
+      "criteria": {
+        "true": "The diff adds text that looks like a genuine secret value.",
+        "false": "The diff adds no such value (placeholders and env var references do not count)."
+      }
+    },
+    "breaking_change_unflagged": {
+      "type": "noul",
+      "instructions": "Does the diff in `files` change a public function signature, API contract, configuration key, or CLI flag in a way existing callers must adapt to, without the body calling out this as a breaking change?",
+      "criteria": {
+        "true": "The diff changes a public contract in a way that breaks callers, and the body says nothing about it.",
+        "false": "The diff makes no such breaking change, or the body explicitly flags it as a breaking change."
+      }
+    },
+    "verdict": {
+      "type": "choice",
+      "instructions": "Given the pull request's title, body, and the diffs in `files`, pick the single best verdict.",
+      "criteria": {
+        "approve": "The pull request does what it claims, has adequate tests for its risk level, and nothing about it looks suspicious.",
+        "human_review": "The pull request is plausible but a human reviewer should look closer: some scope drift, weak tests for the risk involved, or an unclear description.",
+        "send_back": "There is a clear mismatch between the diff and its description, or a red flag such as a possible secret, an unflagged breaking change, or claimed tests that are not present."
+      }
+    }
+  }
+}

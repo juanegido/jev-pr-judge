@@ -1,36 +1,90 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PR Judge
 
-## Getting Started
+A demo of TypeSafe's System One primitives (the Jev model) judging whether a GitHub pull
+request actually does what it claims — a fast, cheap, typed verdict for developers running
+coding agents, instead of a slow LLM-as-judge prompt chain.
 
-First, run the development server:
+## Why System One fits here
+
+- **One call, not a chain.** Every question runs in parallel against one bounded state; there's
+  no multi-turn prompting and no waiting on a chain of chat completions.
+- **Typed answers, not parsed text.** Scores, yes/no probabilities, and a labeled choice come
+  back as numbers and enums code can use directly — no JSON-mode prompt engineering, no regexes
+  over free text.
+- **Policy lives in code, not in the prompt.** Weights, thresholds, and hard rules are plain
+  TypeScript in `src/lib/judge/policy.ts`, reviewable and unit-tested like any other business
+  logic. The model answers questions; your code decides.
+- **Cheap enough to run on every PR.** One parallel call per pull request, not a slow
+  multi-step agent loop, makes it practical to run as a CI gate rather than an occasional
+  audit.
+
+## Setup
+
+1. Install dependencies: `npm install`
+2. Copy the environment template (checked in as `env.example`):
+   ```bash
+   cp env.example .env.local
+   ```
+3. Get a TypeSafe API key at [typesafe.ai](https://typesafe.ai) and set `TYPESAFE_API_KEY` in
+   `.env.local` (or `.env`; both are gitignored).
+4. Optionally set `GITHUB_TOKEN` (a classic or fine-grained GitHub token) to raise GitHub's
+   rate limit and read private repositories you have access to.
+
+## Run
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000), paste a pull request URL, pick a profile,
+and click Judge.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## CLI usage
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npx tsx scripts/judge.ts <pr-url> [--profile balanced|hotfix|refactor|docs] [--json]
+```
 
-## Learn More
+Add `--dump-request` to print the exact `{ model, state, questions }` payload the app sends to
+`POST /v1/systemone` without calling the API — handy for pasting into the TypeSafe playground.
+A captured example lives at `examples/nextjs-pr-1.request.json`.
 
-To learn more about Next.js, take a look at the following resources:
+`scripts/judge.ts` loads `.env.local` and then `.env` itself (no `dotenv` dependency, same
+precedence as Next.js), so it works the same way whether you run it standalone or through the
+web app.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## How the questions are designed
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The heart of this demo is `src/lib/judge/questions.ts`: four **scores** (concrete, ordered
+rubrics), six **nouls** (yes/no red flags with explicit true/false criteria), and one **choice**
+(the model's own verdict). Each instruction is self-contained — question IDs are never sent to
+the model, and questions can't see each other's answers, so nothing beyond the bounded state and
+that one instruction string informs an answer. See the primitive docs this design follows:
 
-## Deploy on Vercel
+- [`score`](https://docs.typesafe.ai/primitives/score.md)
+- [`noul`](https://docs.typesafe.ai/primitives/noul.md)
+- [`choice`](https://docs.typesafe.ai/primitives/choice.md)
+- [Composite scoring pattern](https://docs.typesafe.ai/patterns/composite-scoring.md)
+- [JavaScript SDK](https://docs.typesafe.ai/sdk/javascript.md)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Adding a profile
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Profiles live in `PROFILE_WEIGHTS` in `src/lib/judge/policy.ts`, as weights over four
+normalized dimensions (`scope`, `tests`, `safety`, `description`) that must sum to 1 — a unit
+test in `policy.test.ts` checks this for every profile. Add an entry there and to
+`PROFILE_LABELS`, then add the profile's id to `PROFILES` in `src/lib/judge/types.ts`. No change
+to the questions or the API route is needed: profiles only affect how the same answers are
+weighted, which is why switching profiles in the UI recomputes instantly with no re-inference.
+
+## Honest caveats
+
+- **Typed output guarantees the interface, not the truth.** A `score` of 3/3 for test evidence
+  means the model committed to that rubric level with some confidence — it does not mean the
+  tests are actually good. Treat every answer as a strong, cheap signal, not ground truth.
+- **Thresholds are starting points.** The hard-rule cutoffs (e.g. `possible_secret >= 0.7`) and
+  the `approve` / `human_review` / `send_back` composite bands were picked to be reasonable
+  defaults, not calibrated against your team's pull requests. Watch the flags on real PRs and
+  adjust `policy.ts` accordingly.
+- **State is truncated for large diffs.** Per-file patches are capped and the total patch budget
+  is bounded (see `src/lib/judge/state.ts`); on large pull requests the model is judging a
+  partial diff, and the UI's "State sent to model" panel tells you what was cut.
