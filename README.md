@@ -59,12 +59,32 @@ web app.
 pull requests from a public repository, against two independent reference labels: **merge
 outcome** (merged vs. closed-unmerged — a noisy proxy for quality) and **deterministic,
 regex-based proxies** (`src/lib/eval/proxies.ts`) computed from the diff itself, independent of
-merge outcome, for the Noul flags a pattern can approximate. Results for this repository, once a
-run has completed, are published in [`evaluation/REPORT.md`](./evaluation/REPORT.md); see
+merge outcome, for the Noul flags a pattern can approximate. See
 [`evaluation/README.md`](./evaluation/README.md) for how to reproduce it and what it costs.
 
-Merge outcome is noisy (it skews toward maintainers) and the proxies are regexes with their own
-false positives and negatives — both caveats, and more, are spelled out in the report itself.
+### First run: 50 closed PRs from `excalidraw/excalidraw`
+
+Full tables in [`evaluation/REPORT.md`](./evaluation/REPORT.md). The short version:
+
+- **The red flags separate cleanly where a proxy exists.** `claims_tests_without_evidence`
+  averaged 0.67 when the regex proxy fired vs. 0.03 when it did not (precision 1.00, recall 0.67
+  at the 0.5 threshold); `unmentioned_debt` 0.70 vs. 0.12 (precision 1.00, recall 0.75). The one
+  PR with a proxy-detected secret scored 0.87.
+- **Policy decisions are monotone with merge outcome.** Of the PRs the balanced profile approved,
+  50% were merged; human_review 31%; send_back 15%. The model's own verdict shows the same
+  ordering (48% / 15% / 0%).
+- **The test-evidence rubric is the dimension that moves.** Mean 2.40 / 3 on merged PRs vs.
+  1.40 on unmerged, and the gap survives splitting by maintainer status.
+- **The model corrected the evaluator.** The naive `leftover_debug` proxy fired on three PRs;
+  the model scored all three at ~0.07. Inspection showed the proxy was wrong every time
+  ("debugger-friendly" in Markdown prose, a code comment, a CLI script whose job is to print).
+  The proxy was fixed; the model needed no change.
+- **Cost of the sample:** ~10k input tokens and ~1.7 s per PR, 515k tokens for all 50.
+
+What it does *not* show: with only 3 merged PRs from non-maintainers, there is no evidence either
+way on whether the judge separates quality once authorship is held constant. Merge outcome is a
+noisy label, the proxies are regexes, large PRs were judged on truncated diffs, and thresholds
+were not tuned on this data. Every caveat is spelled out in the report.
 
 ## How the questions are designed
 
