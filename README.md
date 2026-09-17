@@ -1,5 +1,7 @@
 # PR Judge
 
+[![CI](https://github.com/juanegido/jev-pr-judge/actions/workflows/ci.yml/badge.svg)](https://github.com/juanegido/jev-pr-judge/actions/workflows/ci.yml)
+
 A demo of TypeSafe's System One primitives (the Jev model) judging whether a GitHub pull
 request actually does what it claims — a fast, cheap, typed verdict for developers running
 coding agents, instead of a slow LLM-as-judge prompt chain.
