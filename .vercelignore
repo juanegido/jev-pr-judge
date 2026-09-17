@@ -1,0 +1,16 @@
+# When this file exists the CLI stops falling back to .gitignore, so list everything explicitly.
+node_modules
+.next
+.vercel
+.git
+
+# Never ship local secrets with a deployment; configure them with `vercel env add`.
+.env
+.env.*
+
+# Not needed to build or run the web app.
+evaluation/cache
+dist
+.claude
+.agents
+.atl
