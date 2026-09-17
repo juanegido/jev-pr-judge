@@ -117,26 +117,38 @@ regex-based proxies** (`src/lib/eval/proxies.ts`) computed from the diff itself,
 merge outcome, for the Noul flags a pattern can approximate. See
 [`evaluation/README.md`](./evaluation/README.md) for how to reproduce it and what it costs.
 
-### First run: 50 closed PRs from `excalidraw/excalidraw`
+### Results: 50 closed PRs from `excalidraw/excalidraw`
 
-Full tables in [`evaluation/REPORT.md`](./evaluation/REPORT.md). The short version:
+Full tables in [`evaluation/REPORT.md`](./evaluation/REPORT.md) (14 merged, 36 unmerged; all 16
+questions). The short version:
 
 - **The red flags separate cleanly where a proxy exists.** `claims_tests_without_evidence`
-  averaged 0.67 when the regex proxy fired vs. 0.03 when it did not (precision 1.00, recall 0.67
-  at the 0.5 threshold); `unmentioned_debt` 0.70 vs. 0.12 (precision 1.00, recall 0.75). The one
+  averaged 0.64 when the regex proxy fired vs. 0.03 when it did not (precision 1.00, recall 0.63
+  at the 0.5 threshold); `unmentioned_debt` 0.71 vs. 0.11 (precision 1.00, recall 0.75). The one
   PR with a proxy-detected secret scored 0.87.
+- **The security flags stayed quiet where they should.** Excalidraw has no SQL and no
+  migrations; `sql_injection_risk` and `destructive_migration` averaged 0.03 with a maximum of
+  0.04 across all 50 PRs — zero false alarms. `touches_auth` reached 0.94 on exactly one PR, a
+  71-file revert that did touch auth paths; the path-only proxy fired on four, which is the
+  expected gap between "an auth-sounding file changed" and "auth behavior changed".
 - **Policy decisions are monotone with merge outcome.** Of the PRs the balanced profile approved,
-  50% were merged; human_review 31%; send_back 15%. The model's own verdict shows the same
-  ordering (48% / 15% / 0%).
-- **The test-evidence rubric is the dimension that moves.** Mean 2.40 / 3 on merged PRs vs.
-  1.40 on unmerged, and the gap survives splitting by maintainer status.
-- **The model corrected the evaluator.** The naive `leftover_debug` proxy fired on three PRs;
-  the model scored all three at ~0.07. Inspection showed the proxy was wrong every time
-  ("debugger-friendly" in Markdown prose, a code comment, a CLI script whose job is to print).
-  The proxy was fixed; the model needed no change.
-- **Cost of the sample:** ~10k input tokens and ~1.7 s per PR, 515k tokens for all 50.
+  50% were merged; human_review 29%; send_back 11%. The model's own verdict shows the same
+  ordering (48% / 13% / 0%).
+- **The test-evidence rubric is the dimension that moves.** Mean 2.57 / 3 on merged PRs vs.
+  1.44 on unmerged, and the gap survives splitting by maintainer status. Reviewer effort runs the
+  other way (2.39 vs. 1.76): the merged PRs are mostly maintainers' features, and they are harder
+  to review — which is why effort is shown but kept out of the composite.
+- **The evaluation fixed the evaluator twice.** In the first run the naive `leftover_debug`
+  proxy fired on three PRs the model scored at ~0.07; all three were proxy false positives
+  ("debugger-friendly" in Markdown prose, a code comment, a CLI script whose job is to print). In
+  the second run the model gave 0.68 to a PR that deleted two test cases inside an existing file,
+  and the code-fact rule missed it because it only counted whole-file removals. Both times the
+  code changed; the model did not.
+- **Cost of the sample:** ~11k input tokens and ~1.7 s per PR, 566k tokens for all 50. Going
+  from 11 to 16 questions added about 9% to input tokens — the state is sent once, the
+  questions ride along.
 
-What it does *not* show: with only 3 merged PRs from non-maintainers, there is no evidence either
+What it does *not* show: with only 2 merged PRs from non-maintainers, there is no evidence either
 way on whether the judge separates quality once authorship is held constant. Merge outcome is a
 noisy label, the proxies are regexes, large PRs were judged on truncated diffs, and thresholds
 were not tuned on this data. Every caveat is spelled out in the report.
