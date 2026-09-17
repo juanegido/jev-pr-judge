@@ -1,4 +1,4 @@
-name: "PR Judge"
+name: "Jev PR Judge"
 description: "Typed verdicts on pull requests with TypeSafe System One"
 branding:
   icon: "check-square"
