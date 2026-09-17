@@ -17,7 +17,9 @@ export const metadata: Metadata = {
   description: "Typed verdicts on pull requests with TypeSafe System One.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+// Explicit props instead of Next's generated `LayoutProps`, which only exists after `next build`
+// has written `.next/types` — CI runs `tsc --noEmit` before building.
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
