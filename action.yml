@@ -45,5 +45,5 @@ outputs:
     description: "URL of the posted or updated sticky comment; empty if comment was not posted."
 
 runs:
-  using: "node20"
+  using: "node24"
   main: "dist/action/index.js"
