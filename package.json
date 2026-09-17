@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test src/lib/judge/policy.test.ts src/lib/judge/state.test.ts src/lib/github/fetch-pr.test.ts"
+    "test": "tsx --test src/lib/judge/policy.test.ts src/lib/judge/state.test.ts src/lib/github/fetch-pr.test.ts src/lib/eval/proxies.test.ts",
+    "evaluate": "tsx scripts/evaluate.ts",
+    "report": "tsx scripts/report.ts"
   },
   "dependencies": {
     "@typesafe-ai/sdk": "^0.6.0",

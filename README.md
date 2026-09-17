@@ -53,6 +53,19 @@ A captured example lives at `examples/nextjs-pr-1.request.json`.
 precedence as Next.js), so it works the same way whether you run it standalone or through the
 web app.
 
+## Evaluation
+
+`scripts/evaluate.ts` and `scripts/report.ts` measure how PR Judge behaves on real, historical
+pull requests from a public repository, against two independent reference labels: **merge
+outcome** (merged vs. closed-unmerged — a noisy proxy for quality) and **deterministic,
+regex-based proxies** (`src/lib/eval/proxies.ts`) computed from the diff itself, independent of
+merge outcome, for the Noul flags a pattern can approximate. Results for this repository, once a
+run has completed, are published in [`evaluation/REPORT.md`](./evaluation/REPORT.md); see
+[`evaluation/README.md`](./evaluation/README.md) for how to reproduce it and what it costs.
+
+Merge outcome is noisy (it skews toward maintainers) and the proxies are regexes with their own
+false positives and negatives — both caveats, and more, are spelled out in the report itself.
+
 ## How the questions are designed
 
 The heart of this demo is `src/lib/judge/questions.ts`: four **scores** (concrete, ordered
